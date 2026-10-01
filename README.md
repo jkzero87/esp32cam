@@ -240,3 +240,75 @@ past, so false matches (a stranger named juan) were **not** tested. Enrollment
 and test were minutes apart, with the same lighting and clothes. The weakest
 correct matches (0.37–0.42) are close to the 0.363 threshold. Test with other
 people, and on another day, before relying on it.
+
+### Impostor test with LFW (2026-10-01)
+
+Do strangers get named "juan"? Instead of recruiting people, this uses faces
+from **Labeled Faces in the Wild (LFW)**.
+
+**Data and terms.** `lfw.tgz` (the original, non-funneled set; 13,233 images of
+5,749 people) was downloaded from the URL scikit-learn's `fetch_lfw_people`
+uses (`https://ndownloader.figshare.com/files/5976018`) and checked against
+sklearn's SHA-256 (`055f7d9c…d536c0`). It is stored under `data/lfw/`
+(gitignored) and is not redistributed. The official LFW page
+(http://vis-www.cs.umass.edu/lfw/) did not respond. Its Internet Archive copy
+(snapshot 2025-01-05) states no license and carries this disclaimer:
+
+> "Labeled Faces in the Wild is a public benchmark for face verification, also
+> known as pair matching. No matter what the performance of an algorithm on LFW,
+> it should not be used to conclude that an algorithm is suitable for any
+> commercial purpose."
+
+The images are third-party photos from the web; they are used here only
+locally, for this evaluation.
+
+**Method** (`pc/impostor_test.py`):
+1. Take 2,000 LFW images sampled with seed 42.
+2. Detect the face nearest the centre at native size.
+3. Rescale the image so that face is a random 50–100 px wide (seeded), like the
+   faces in the camera's frames.
+4. Detect again (YuNet score ≥ 0.7, as in the walk-by).
+5. Align, embed and compare with the same `identify()` that `--recognize` uses:
+   best cosine over the gallery.
+
+All 2,000 faces were detected and embedded. The run takes about 30 s on the CPU.
+Two galleries were compared: all 20 embeddings of `juan`, and the one embedding
+closest to their mean.
+
+| Gallery | Strangers named "juan" at 0.363 | max | p99 | p95 | median |
+|---|---:|---:|---:|---:|---:|
+| 20 embeddings | **4 / 2,000 (0.2%)** | 0.401 | 0.306 | 0.256 | 0.135 |
+| 1 embedding | 0 / 2,000 | 0.278 | 0.216 | 0.158 | 0.009 |
+
+What 20 diverse embeddings cost: taking the best of 20 raises every stranger's
+score (median 0.009 → 0.135, max 0.278 → 0.401), so the stranger tail crosses
+0.363. The single embedding's own true-match rate is not known, since the
+walk-by frames' embeddings were not kept, so the 1-embedding row shows only its
+false-accept side.
+
+**Trade-off.** Own frames are the 150 face frames of the recognition walk-by;
+their per-frame similarities were taken from that run's printed log. Strangers
+are the 2,000 LFW faces against the 20-embedding gallery.
+
+| Threshold | Own frames recognized (of 150) | Of the 145 recognized at 0.363 | Strangers named "juan" (per 2,000) |
+|---:|---:|---:|---:|
+| 0.363 (OpenCV default) | 145 (96.7%) | 100% | 4 |
+| 0.40 | 140 (93.3%) | 96.6% | 1 |
+| 0.45 | 133 (88.7%) | 91.7% | 0 |
+| 0.50 | 129 (86.0%) | 89.0% | 0 |
+
+**Reading:**
+- At the documented 0.363, about 1 stranger in 500 is named juan.
+- 0.45 removes all false accepts in this sample and still recognizes 89% of
+  the frames, and every walk-by detection group still has frames at ≥ 0.45 (the
+  lowest group maximum was 0.562).
+- With several people enrolled, the false-accept chance grows roughly with the
+  number of people.
+
+**Limits:**
+- 2,000 strangers is a small sample: 0 false accepts at 0.45 means "rare", not
+  "never".
+- LFW faces are rescaled news-quality photos, not this camera's sensor and JPEG
+  noise.
+- The own-frame numbers come from one person, one session and one lighting
+  setup.
