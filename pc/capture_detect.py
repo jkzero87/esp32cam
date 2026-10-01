@@ -21,7 +21,12 @@ to disk without --save.
 --recognize compares every detected face (aligned and embedded with SFace)
 with every embedding of every person in data/gallery/*.npy (from enroll.py):
 the face gets the name with the highest cosine similarity, or "unknown" if
-that is below 0.363, OpenCV's documented same-identity threshold.
+that is below 0.45 (OpenCV documents 0.363; 0.45 is chosen from the LFW
+impostor trade-off in the README). A person is "confirmed" when they match
+in at least 2 of the last 3 frames; an unknown face when it is seen in 3 of 3.
+--add-embeddings (off by default): when a person is confirmed and a face
+matches them at >= 0.6 from a new view (cosine < 0.9 to every kept
+embedding), append it to data/gallery/NAME.npy, up to 20.
 
 --preview shows each frame in a window, scaled up 2x, with the face boxes,
 scores, t and the running count of frames with a face. Press q to stop early.
@@ -55,6 +60,11 @@ GALLERY = ROOT / "data" / "gallery"
 # OpenCV tutorial "DNN-based Face Detection And Recognition" (tutorial_dnn_face),
 # samples/dnn/face_detect.py, and opencv_zoo models/face_recognition_sface/sface.py.
 COSINE_SAME = 0.363
+# Used threshold: 0.45, from the LFW impostor test (README, "Trade-off"): 0 of
+# 2,000 strangers named juan vs 4 at 0.363, keeping 88.7% of own walk-by frames.
+RECOGNIZE_AT = 0.45
+CONFIRM_WINDOW, CONFIRM_NEED, UNKNOWN_NEED = 3, 2, 3
+ADD_MIN_SIM, ADD_DIVERSITY, GALLERY_CAP = 0.6, 0.9, 20
 WINDOW = "ESP32-CAM faces (q to quit)"
 GREEN, YELLOW = (0, 255, 0), (0, 215, 255)
 CONTENT_LENGTH = re.compile(rb"^content-length:\s*(\d+)", re.I)
@@ -123,16 +133,56 @@ def load_gallery():
     return gallery
 
 
-def identify(rec, gallery, img, face):
-    """(best name or 'unknown', best cosine over every embedding of every person)."""
-    feat = rec.feature(rec.alignCrop(img, face)).ravel()
-    feat = feat / np.linalg.norm(feat)
+def embed(rec, img, face):
+    """SFace feature of an aligned face (raw, as enroll.py stores it)."""
+    return rec.feature(rec.alignCrop(img, face)).ravel().astype(np.float32)
+
+
+def identify(rec, gallery, img, face, threshold=COSINE_SAME, feat=None):
+    """(best name or 'unknown', best cosine over every embedding of every person, raw feature).
+
+    The threshold defaults to the documented 0.363 so impostor_test.py can sweep
+    it; --recognize and greeter.py pass RECOGNIZE_AT."""
+    feat = embed(rec, img, face) if feat is None else feat
+    unit = feat / np.linalg.norm(feat)
     best_name, best = "unknown", -1.0
     for name, emb in gallery.items():
-        sim = float((emb @ feat).max())
+        sim = float((emb @ unit).max())
         if sim > best:
             best_name, best = name, sim
-    return (best_name if best >= COSINE_SAME else "unknown"), best
+    return (best_name if best >= threshold else "unknown"), best, feat
+
+
+class Confirmer:
+    """Confirm a person after CONFIRM_NEED of the last CONFIRM_WINDOW frames
+    match them, and an unknown face after UNKNOWN_NEED of the last frames."""
+
+    def __init__(self):
+        self.history = []  # per frame: (set of matched names, any unknown face)
+
+    def update(self, names, unknown):
+        self.history = (self.history + [(set(names), bool(unknown))])[-CONFIRM_WINDOW:]
+        counts = {}
+        for frame_names, _ in self.history:
+            for n in frame_names:
+                counts[n] = counts.get(n, 0) + 1
+        confirmed = {n for n, c in counts.items() if c >= CONFIRM_NEED}
+        unknown_confirmed = sum(u for _, u in self.history) >= UNKNOWN_NEED
+        return confirmed, unknown_confirmed
+
+
+def maybe_add(gallery, name, feat, sim):
+    """--add-embeddings: append FEAT to NAME's gallery if it is a confident, new view."""
+    if sim < ADD_MIN_SIM or len(gallery[name]) >= GALLERY_CAP:
+        return None
+    unit = feat / np.linalg.norm(feat)
+    if float((gallery[name] @ unit).max()) >= ADD_DIVERSITY:
+        return None
+    path = GALLERY / f"{name}.npy"
+    raw = np.load(path).astype(np.float32).reshape(-1, 128)
+    np.save(path, np.vstack([raw, feat[None, :]]))
+    gallery[name] = np.vstack([gallery[name], unit[None, :]])
+    return len(gallery[name])
 
 
 def show(img, faces, label, color, labels=None):
@@ -170,7 +220,10 @@ def main():
     ap.add_argument("--warmup", type=float, default=0,
                     help="seconds shown first but not measured or saved (default 0)")
     ap.add_argument("--recognize", action="store_true",
-                    help=f"name each face from data/gallery/ (SFace cosine >= {COSINE_SAME}, else unknown)")
+                    help=f"name each face from data/gallery/ (SFace cosine >= {RECOGNIZE_AT}, else unknown)")
+    ap.add_argument("--add-embeddings", action="store_true",
+                    help=f"with --recognize: add confirmed new views (sim >= {ADD_MIN_SIM}, "
+                         f"cosine < {ADD_DIVERSITY} to kept) to the gallery, up to {GALLERY_CAP}")
     args = ap.parse_args()
 
     ip = os.environ.get("CAM_IP", "192.168.20.71")
@@ -192,7 +245,12 @@ def main():
             ap.error(f"--recognize: no embeddings in {GALLERY.relative_to(ROOT)}/ (run pc/enroll.py first)")
         rec = cv2.FaceRecognizerSF.create(str(SFACE), "", cv2.dnn.DNN_BACKEND_DEFAULT, cv2.dnn.DNN_TARGET_CPU)
         print("gallery: " + ", ".join(f"{n} ({len(e)} embeddings)" for n, e in gallery.items())
-              + f"; same identity if cosine >= {COSINE_SAME}", flush=True)
+              + f"; same identity if cosine >= {RECOGNIZE_AT} (documented: {COSINE_SAME}); confirmed after "
+              f"{CONFIRM_NEED} of {CONFIRM_WINDOW} frames; add-embeddings={'on' if args.add_embeddings else 'off'}",
+              flush=True)
+    elif args.add_embeddings:
+        ap.error("--add-embeddings needs --recognize")
+    confirmer = Confirmer()
     if args.save:
         FRAMES.mkdir(parents=True, exist_ok=True)
     print(f"{url} {how}; warm-up {args.warmup:g} s + measured {args.seconds:g} s; "
@@ -237,7 +295,15 @@ def main():
         dt = time.perf_counter() - t0
         faces = [] if faces is None else faces
         best = max((float(f[14]) for f in faces), default=0.0)
-        ids = [identify(rec, gallery, img, f) for f in faces] if args.recognize else []
+        ids = [identify(rec, gallery, img, f, RECOGNIZE_AT) for f in faces] if args.recognize else []
+        confirmed, unknown_confirmed, added = set(), False, []
+        if args.recognize:
+            confirmed, unknown_confirmed = confirmer.update(
+                {n for n, _, _ in ids if n != "unknown"}, any(n == "unknown" for n, _, _ in ids))
+            if args.add_embeddings:
+                for n, sim, feat in ids:
+                    if n in confirmed and (k := maybe_add(gallery, n, feat, sim)):
+                        added.append(f"{n}#{k}")
         if not warm:
             frames += 1
             first_measured = first_measured or now
@@ -249,10 +315,14 @@ def main():
                 scores += [float(f[14]) for f in faces]
             if any(name != "unknown" for name, _ in ids):
                 recognized += 1
-            sims += [sim for _, sim in ids]
+            sims += [sim for _, sim, _ in ids]
         boxes = "  ".join(f"[{float(f[14]):.3f} x={int(f[0])} y={int(f[1])} w={int(f[2])} h={int(f[3])}"
                           + (f" id={ids[i][0]} sim={ids[i][1]:.3f}" if ids else "") + "]"
                           for i, f in enumerate(faces))
+        if args.recognize:
+            boxes += (f"  confirmed={','.join(sorted(confirmed)) or '-'}"
+                      + ("  unknown-confirmed" if unknown_confirmed else "")
+                      + (f"  ADDED {' '.join(added)}" if added else ""))
         print(f"{ts:%H:%M:%S.%f}"[:-3] + f"  {tag}t={t:+7.2f}s  {w}x{h}  fetch {ft * 1000:6.1f} ms"
               f"  detect {dt * 1000:5.1f} ms  faces {len(faces)}  best {best:.3f}  {boxes}", flush=True)
         if args.preview:
@@ -260,7 +330,8 @@ def main():
                 label, color = f"WARM-UP {-t:.0f}s  faces {len(faces)}", YELLOW
             else:
                 label, color = f"t={t:.0f}s  faces {len(faces)}  with face {with_face}/{frames}", GREEN
-            labels = [(f"{name} {sim:.2f}", name != "unknown") for name, sim in ids] if ids else None
+            labels = [(f"{name}{'*' if name in confirmed else ''} {sim:.2f}", name != "unknown")
+                      for name, sim, _ in ids] if ids else None
             quit_ = show(img, faces, label, color, labels)
         if args.save and not warm and len(faces):
             draw_faces(img, faces)

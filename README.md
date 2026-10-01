@@ -221,7 +221,8 @@ overwritten without `--replace`.
 
 Each detected face is compared with every embedding of every person in
 `data/gallery/`. It gets the name with the highest similarity, or `unknown`
-(red box) if that similarity is below 0.363. The name and similarity are drawn
+(red box) if that similarity is below **0.45**. The tests below used 0.363;
+0.45 was adopted after the LFW impostor test (see "Recognition rules"). The name and similarity are drawn
 in the preview and logged per face (`id=... sim=...`).
 
 ### First recognition test (2026-10-01)
@@ -312,3 +313,90 @@ are the 2,000 LFW faces against the 20-embedding gallery.
   noise.
 - The own-frame numbers come from one person, one session and one lighting
   setup.
+
+### Recognition rules (adopted 2026-10-01)
+
+- **Threshold 0.45**, not OpenCV's 0.363. Reason: the LFW trade-off table
+  above. At 0.45, 0 of 2,000 strangers were named juan (4 at 0.363), while
+  88.7% of own walk-by frames and every walk-by detection group were still
+  recognized.
+- **Confirmation:** a person is *confirmed* only when 2 of the last 3 frames
+  match them at ≥ 0.45. An unknown face is confirmed when it is seen in 3 of
+  the last 3 frames. The log shows `confirmed=...`, and confirmed names get a `*`
+  in the preview.
+- **`--add-embeddings`** (off by default): when a person is confirmed and a face
+  matches them at ≥ 0.6 from a new view (cosine < 0.9 to every kept
+  embedding), it is appended to `data/gallery/NAME.npy`, up to 20. `juan` is
+  already at 20, so nothing is added for him until the cap or gallery changes.
+
+## Local LLM greeter (phase 3)
+
+### Model
+
+The smallest instruct model already in `~/models` (nothing was downloaded):
+**Qwen3.5-4B**, `Qwen3.5-4B-MTP-UD-Q4_K_XL.gguf` (2.99 GB, Apache-2.0, has a
+chat template). The other small files were not usable on their own:
+`mmproj-*` are vision projectors, and `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (1.9B)
+has architecture `dflash`, a draft head for the 27B.
+
+It is served by llama.cpp on **CPU only**, so the GPU stays with the 27B model
+on :8092:
+
+```sh
+CUDA_VISIBLE_DEVICES="" setsid nohup ~/llama.cpp/build/bin/llama-server \
+  -m ~/models/Qwen3.5-4B-MTP-UD-Q4_K_XL.gguf -ngl 0 --device none -c 4096 -t 4 -np 1 \
+  --host 127.0.0.1 --port 8093 --reasoning-budget 0 > ~/logs/qwen35_4b_cpu.log 2>&1 < /dev/null &
+```
+
+llama.cpp logs "failed to initialize CUDA: no CUDA-capable device is detected"
+(intended), and `nvidia-smi` does not list the process. 4 threads (of 12)
+leave room for the running benchmark. Thinking is off (`--reasoning-budget 0`;
+requests also send `enable_thinking: false`). **Speed:** 9.4–9.5 tokens/s
+generation for a 100-token reply (10.4 s), prefill about 32 tokens/s.
+
+**Stop by 18:55.** The PC is turned off around 19:00. `tools/stop_at.sh HH:MM
+PID PATTERN` stops a process at a clock time (SIGTERM, SIGKILL after 60 s); the
+command-line pattern check means a reused PID is never signalled:
+
+```sh
+setsid nohup tools/stop_at.sh 18:55 <PID> 'llama-server.*--port 8093' >> ~/logs/stop_at.log 2>&1 < /dev/null &
+```
+
+### `pc/greeter.py`
+
+```sh
+.venv/bin/python pc/greeter.py --preview --metrics     # run in an interactive terminal
+```
+
+It reads the stream and applies the recognition rules above.
+- **Known person:** a confirmed person not seen for `--absent-minutes`
+  (default 30) gets a greeting by name, in Spanish, from the model at `LLM_URL`
+  (OpenAI-compatible, default `http://127.0.0.1:8093/v1`). The system prompt is
+  friendly, casual and brief. Replies are typed in the terminal; an empty line
+  ends the conversation.
+- **Unknown face:** confirmed over 3 frames, it is asked once per run "Hola, no
+  te conozco. ¿Quieres que te recuerde la próxima vez?"; the answer is not used
+  yet (profiles and memory are phase 4).
+- **Disk:** no conversation text is written. `--metrics` appends only timings
+  and token counts to `data/greeter_metrics.jsonl` (gitignored).
+- **Stop:** it exits at `--until` (default 18:50) or on Ctrl+C.
+
+### First greeter test (2026-10-01)
+
+Juan walked in front of the camera. He was confirmed and greeted by name in the
+terminal, then replied 4 times.
+
+| | first word after | tokens | tokens/s |
+|---|---:|---:|---:|
+| greeting (confirmation → first word) | **0.20 s** (warm cache); **2.65 s** cold | 15 | 9.7 |
+| reply 1 | 0.97 s | 19 | 9.7 |
+| reply 2 | 1.29 s | 28 | 9.3 |
+| reply 3 | 1.80 s | 24 | 9.1 |
+| reply 4 | 1.30 s | 19 | 8.9 |
+
+The 0.20 s greeting reused llama.cpp's prompt cache: an identical greeting
+prompt had been sent minutes earlier, so only 4 new tokens were processed. A
+cold greeting has to prefill about 80 prompt tokens on the CPU (~2.5 s), which
+gives the 2.65 s measured just before. Reply latency (1–1.8 s) is mostly
+prefill of the new turn. The model writes about 9 tokens/s, so a two-sentence
+reply finishes in 2–3 s.
