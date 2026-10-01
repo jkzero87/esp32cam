@@ -74,7 +74,7 @@ curl -fL -o models/face_recognition_sface_2021dec.onnx $Z/face_recognition_sface
 | Model | File | Size | SHA-256 | License |
 |---|---|---:|---|---|
 | YuNet (face detection) | `face_detection_yunet_2026may.onnx` | 229,738 B | `ebafce4e3c118d6554634be5c27ab333b4c047a9a8c3faf1d7cf93101c22f0f0` | MIT (Shiqi Yu) |
-| SFace (face recognition, not used yet) | `face_recognition_sface_2021dec.onnx` | 38,696,353 B | `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79` | Apache-2.0 |
+| SFace (face recognition) | `face_recognition_sface_2021dec.onnx` | 38,696,353 B | `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79` | Apache-2.0 |
 
 `2026may` is the zoo's default YuNet for OpenCV 5. It is the `2023mar` model
 re-exported with dynamic input dims, which OpenCV 5's ONNX Runtime engine needs
@@ -172,9 +172,71 @@ without a face):
 | 8 | 51.4–53.2 | 9 | 0.907 | 91×101 | 92×101 |
 | 9 | 56.5–60.1 | 14 | 0.857 | 88×90 | 92×92 |
 
-Groups 1 and 9 sit at the start and end of the run (probably near the camera
-before and after walking), so groups 2–8 are the candidate passes; they have
-not been matched to the pass types yet. Each detected pass lasted 1.6–3.8 s
-(8–18 frames at ~4.5 fps). No face narrower than 47 px was detected, and most
-boxes were 70–100 px wide in the 240x240 frame. That suggests the passes came
-closer than 2 m, or that faces at a true 2 m were not detected at all.
+Recorded as: **9 detection groups**; the seven middle ones (2–8, the
+candidate passes) had **8–18 frames each and max score 0.91–0.93**. Groups 1
+and 9 at the start and end of the run had 7 and 14 frames, max 0.912 and 0.857.
+Per-pass time matching was skipped. No face narrower than 47 px was detected;
+most boxes were 70–100 px wide in the 240x240 frame, so the passes probably came
+closer than 2 m.
+
+## Face recognition (SFace)
+
+### Same-person threshold
+
+SFace compares two aligned faces by the **cosine similarity** of their 128-d
+features (or their norm-L2 distance). The threshold used here comes from
+OpenCV, not a guess:
+
+> "two faces have same identity if the cosine distance is greater than or equal
+> to 0.363, or the normL2 distance is less than or equal to 1.128."
+> — OpenCV tutorial *DNN-based Face Detection And Recognition*
+> (https://docs.opencv.org/4.x/d0/dd4/tutorial_dnn_face.html)
+
+The same values appear in OpenCV's `samples/dnn/face_detect.py`
+(`cosine_similarity_threshold = 0.363`, `l2_similarity_threshold = 1.128`) and
+in opencv_zoo's `models/face_recognition_sface/sface.py` at the pinned commit
+(`_threshold_cosine = 0.363`, `_threshold_norml2 = 1.128`). The code uses
+**cosine ≥ 0.363**; the cosine it computes matches `FaceRecognizerSF.match(...,
+FR_COSINE)` exactly.
+
+### Enroll
+
+```sh
+.venv/bin/python pc/enroll.py --name juan --seconds 30 --preview
+```
+
+Reads the stream for 30 s. For every frame with exactly one face (frames with
+several faces are skipped, so nobody else is enrolled by accident), it aligns
+and embeds the face with SFace. It keeps an embedding only if its cosine
+similarity to every embedding already kept is below 0.9, up to 20, which gives
+a diverse set. Only the embeddings are written, to `data/gallery/NAME.npy`
+(float32, shape [k, 128], gitignored); no images. An existing gallery is not
+overwritten without `--replace`.
+
+### Recognize
+
+```sh
+.venv/bin/python pc/capture_detect.py --source stream --recognize --preview --score 0.7
+```
+
+Each detected face is compared with every embedding of every person in
+`data/gallery/`. It gets the name with the highest similarity, or `unknown`
+(red box) if that similarity is below 0.363. The name and similarity are drawn
+in the preview and logged per face (`id=... sim=...`).
+
+### First recognition test (2026-10-01)
+
+- **Enrollment** (30 s, facing then turning and moving): 135 frames, 49 with
+  one face, 0 with several. Kept **20 embeddings**; the cap was reached after
+  ~15 s, so later poses were not sampled. Cosine between kept embeddings when
+  added: 0.46–0.88.
+- **Recognition walk-by** (60 s, six passes, stream, YuNet score ≥ 0.7):
+  150 frames with a face, **145 recognized as juan (97%)**. Similarity as juan
+  0.366–0.903; the 5 `unknown` faces were at 0.228–0.352. **12 detection
+  groups, every one with at least one frame recognized.**
+
+Limits of this test: only one person was enrolled and only that person walked
+past, so false matches (a stranger named juan) were **not** tested. Enrollment
+and test were minutes apart, with the same lighting and clothes. The weakest
+correct matches (0.37–0.42) are close to the 0.363 threshold. Test with other
+people, and on another day, before relying on it.

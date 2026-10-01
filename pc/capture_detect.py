@@ -18,6 +18,11 @@ detection rate, mean score, mean fetch and detection times.
 data/frames/. Frames without a face are never written, and nothing is written
 to disk without --save.
 
+--recognize compares every detected face (aligned and embedded with SFace)
+with every embedding of every person in data/gallery/*.npy (from enroll.py):
+the face gets the name with the highest cosine similarity, or "unknown" if
+that is below 0.363, OpenCV's documented same-identity threshold.
+
 --preview shows each frame in a window, scaled up 2x, with the face boxes,
 scores, t and the running count of frames with a face. Press q to stop early.
 --warmup N first runs N seconds that are shown (labelled WARM-UP) but not
@@ -44,6 +49,12 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = ROOT / "models" / "face_detection_yunet_2026may.onnx"
 FRAMES = ROOT / "data" / "frames"
+SFACE = ROOT / "models" / "face_recognition_sface_2021dec.onnx"
+GALLERY = ROOT / "data" / "gallery"
+# Same identity if cosine similarity >= 0.363 (or norm-L2 distance <= 1.128):
+# OpenCV tutorial "DNN-based Face Detection And Recognition" (tutorial_dnn_face),
+# samples/dnn/face_detect.py, and opencv_zoo models/face_recognition_sface/sface.py.
+COSINE_SAME = 0.363
 WINDOW = "ESP32-CAM faces (q to quit)"
 GREEN, YELLOW = (0, 255, 0), (0, 215, 255)
 CONTENT_LENGTH = re.compile(rb"^content-length:\s*(\d+)", re.I)
@@ -91,18 +102,43 @@ def stream_frames(url, timeout):
             yield decode(data), time.perf_counter() - t0
 
 
-def draw_faces(img, faces):
-    for f in faces:
+def draw_faces(img, faces, labels=None):
+    """Box each face; label it with its score, or with LABELS[i] = (text, known)."""
+    for i, f in enumerate(faces):
         x, y, bw, bh = (int(v) for v in f[:4])
-        cv2.rectangle(img, (x, y), (x + bw, y + bh), GREEN, 2)
-        cv2.putText(img, f"{float(f[14]):.2f}", (x, max(y - 4, 10)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, GREEN, 1)
+        text, color = f"{float(f[14]):.2f}", GREEN
+        if labels:
+            text, known = labels[i]
+            color = GREEN if known else (0, 0, 255)
+        cv2.rectangle(img, (x, y), (x + bw, y + bh), color, 2)
+        cv2.putText(img, text, (x, max(y - 4, 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
 
-def show(img, faces, label, color):
+def load_gallery():
+    """{name: L2-normalised embeddings [k, 128]} from data/gallery/*.npy."""
+    gallery = {}
+    for path in sorted(GALLERY.glob("*.npy")):
+        emb = np.load(path).astype(np.float32).reshape(-1, 128)
+        gallery[path.stem] = emb / np.linalg.norm(emb, axis=1, keepdims=True)
+    return gallery
+
+
+def identify(rec, gallery, img, face):
+    """(best name or 'unknown', best cosine over every embedding of every person)."""
+    feat = rec.feature(rec.alignCrop(img, face)).ravel()
+    feat = feat / np.linalg.norm(feat)
+    best_name, best = "unknown", -1.0
+    for name, emb in gallery.items():
+        sim = float((emb @ feat).max())
+        if sim > best:
+            best_name, best = name, sim
+    return (best_name if best >= COSINE_SAME else "unknown"), best
+
+
+def show(img, faces, label, color, labels=None):
     """Scale 2x, draw boxes at the new scale and the status line; return True on q."""
     big = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
-    draw_faces(big, [list(f[:4] * 2) + list(f[4:]) for f in faces])
+    draw_faces(big, [list(f[:4] * 2) + list(f[4:]) for f in faces], labels)
     cv2.rectangle(big, (0, 0), (big.shape[1], 22), (0, 0, 0), -1)
     cv2.putText(big, label, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
     cv2.imshow(WINDOW, big)
@@ -133,6 +169,8 @@ def main():
     ap.add_argument("--preview", action="store_true", help="show frames in a window, 2x, with boxes; q quits")
     ap.add_argument("--warmup", type=float, default=0,
                     help="seconds shown first but not measured or saved (default 0)")
+    ap.add_argument("--recognize", action="store_true",
+                    help=f"name each face from data/gallery/ (SFace cosine >= {COSINE_SAME}, else unknown)")
     args = ap.parse_args()
 
     ip = os.environ.get("CAM_IP", "192.168.20.71")
@@ -147,6 +185,14 @@ def main():
     cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)  # OpenCV 5 engine notices
     det = cv2.FaceDetectorYN.create(str(MODEL), "", (320, 320), args.score, 0.3, 50,
                                     cv2.dnn.DNN_BACKEND_DEFAULT, cv2.dnn.DNN_TARGET_CPU)
+    rec, gallery = None, {}
+    if args.recognize:
+        gallery = load_gallery()
+        if not gallery:
+            ap.error(f"--recognize: no embeddings in {GALLERY.relative_to(ROOT)}/ (run pc/enroll.py first)")
+        rec = cv2.FaceRecognizerSF.create(str(SFACE), "", cv2.dnn.DNN_BACKEND_DEFAULT, cv2.dnn.DNN_TARGET_CPU)
+        print("gallery: " + ", ".join(f"{n} ({len(e)} embeddings)" for n, e in gallery.items())
+              + f"; same identity if cosine >= {COSINE_SAME}", flush=True)
     if args.save:
         FRAMES.mkdir(parents=True, exist_ok=True)
     print(f"{url} {how}; warm-up {args.warmup:g} s + measured {args.seconds:g} s; "
@@ -156,6 +202,7 @@ def main():
         cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
 
     frames, with_face, scores, fetch_t, det_t, errors, saved = 0, 0, [], [], [], 0, 0
+    recognized, sims = 0, []
     quit_ = False
     measure_from = time.monotonic() + args.warmup
     t_end = measure_from + args.seconds
@@ -190,6 +237,7 @@ def main():
         dt = time.perf_counter() - t0
         faces = [] if faces is None else faces
         best = max((float(f[14]) for f in faces), default=0.0)
+        ids = [identify(rec, gallery, img, f) for f in faces] if args.recognize else []
         if not warm:
             frames += 1
             first_measured = first_measured or now
@@ -199,8 +247,12 @@ def main():
             if len(faces):
                 with_face += 1
                 scores += [float(f[14]) for f in faces]
-        boxes = "  ".join(f"[{float(f[14]):.3f} x={int(f[0])} y={int(f[1])} w={int(f[2])} h={int(f[3])}]"
-                          for f in faces)
+            if any(name != "unknown" for name, _ in ids):
+                recognized += 1
+            sims += [sim for _, sim in ids]
+        boxes = "  ".join(f"[{float(f[14]):.3f} x={int(f[0])} y={int(f[1])} w={int(f[2])} h={int(f[3])}"
+                          + (f" id={ids[i][0]} sim={ids[i][1]:.3f}" if ids else "") + "]"
+                          for i, f in enumerate(faces))
         print(f"{ts:%H:%M:%S.%f}"[:-3] + f"  {tag}t={t:+7.2f}s  {w}x{h}  fetch {ft * 1000:6.1f} ms"
               f"  detect {dt * 1000:5.1f} ms  faces {len(faces)}  best {best:.3f}  {boxes}", flush=True)
         if args.preview:
@@ -208,7 +260,8 @@ def main():
                 label, color = f"WARM-UP {-t:.0f}s  faces {len(faces)}", YELLOW
             else:
                 label, color = f"t={t:.0f}s  faces {len(faces)}  with face {with_face}/{frames}", GREEN
-            quit_ = show(img, faces, label, color)
+            labels = [(f"{name} {sim:.2f}", name != "unknown") for name, sim in ids] if ids else None
+            quit_ = show(img, faces, label, color, labels)
         if args.save and not warm and len(faces):
             draw_faces(img, faces)
             cv2.imwrite(str(FRAMES / f"{ts:%Y%m%d-%H%M%S-%f}.jpg"), img)
@@ -231,7 +284,10 @@ def main():
           + f"; mean score {mean(scores, '.3f')}"
           + f"; mean fetch {mean([x * 1000 for x in fetch_t], '.1f')} ms"
           + f"; mean detect {mean([x * 1000 for x in det_t], '.1f')} ms"
-          + (f"; saved {saved} frames to {FRAMES.relative_to(ROOT)}/" if args.save else ""), flush=True)
+          + (f"; saved {saved} frames to {FRAMES.relative_to(ROOT)}/" if args.save else "")
+          + (f"; recognized (≥1 known face) {recognized}/{with_face} frames with a face"
+             + (f", similarity {min(sims):.3f}–{max(sims):.3f}" if sims else "") if args.recognize else ""),
+          flush=True)
     return 0 if frames else 1
 
 
