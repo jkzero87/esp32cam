@@ -400,3 +400,41 @@ cold greeting has to prefill about 80 prompt tokens on the CPU (~2.5 s), which
 gives the 2.65 s measured just before. Reply latency (1–1.8 s) is mostly
 prefill of the new turn. The model writes about 9 tokens/s, so a two-sentence
 reply finishes in 2–3 s.
+
+## Phase 4: profiles and memory (code ready, live test pending)
+
+- **Database:** schema `cam` in `de_postgres` (`sql/001_schema.sql`).
+  `cam.people` (name, created_at, consent_at) and `cam.facts` (fact,
+  created_at, source_conversation_at; deleted with the person). Gallery
+  embeddings stay in `data/gallery/<name>.npy`, linked by name.
+- **Access:** a dedicated least-privilege role, `camuser`. It owns `cam` and
+  nothing else: `jira.issues` gives "permission denied for schema jira", and it
+  cannot create in `public`. The password was generated locally; only its
+  SCRAM verifier was sent to Postgres. Credentials are in `.env` (gitignored,
+  mode 600).
+- **After each conversation** the 4B model extracts up to 3 short durable facts
+  from what the person said (JSON; one example in the prompt, without which the
+  4B returned nothing). Facts about health, money, passwords/IDs or third
+  parties are excluded, by the prompt and again by a keyword filter. Only the
+  facts are stored, never the transcript.
+- **Greetings** include the person's last 5 facts.
+- **Unknown faces** are asked once; only a clear "sí" (e.g. "sí", "sí,
+  recuérdame", "sí, claro"; not "hola" or "sí, pero no") leads to asking the
+  name, recording `consent_at` and building a gallery from that exchange's
+  frames. Otherwise nothing is stored and the question waits 10 minutes.
+- **"olvídame" / "bórrame"** + "sí" deletes the row, the facts and the gallery
+  file.
+
+Live tests:
+
+```sh
+# (b) memory: mention something concrete, end with an empty line, step out ≥5 s, come back
+.venv/bin/python pc/greeter.py --preview --metrics --absent-minutes 0
+# (c) unknown flow with an empty temporary gallery: sí -> prueba; later "olvídame" -> sí
+.venv/bin/python pc/greeter.py --preview --metrics --absent-minutes 0 --gallery-dir /tmp/empty_gallery
+```
+
+The first live attempt (2026-10-01) stored nothing. Ctrl+C ended the
+conversation before fact extraction ran, and the consent answer was not taken
+as a yes (likely a stale empty line). Both are fixed but not yet retested; see
+NEXT.md.
