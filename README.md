@@ -84,18 +84,21 @@ for arbitrary frame sizes.
 
 ```sh
 CAM_IP=192.168.20.71 .venv/bin/python pc/capture_detect.py --seconds 30
+.venv/bin/python pc/capture_detect.py --source stream --preview --score 0.7   # MJPEG stream, every frame
 .venv/bin/python pc/capture_detect.py --preview --warmup 10 --seconds 30   # watch it live
 .venv/bin/python pc/capture_detect.py --seconds 60 --save   # keep frames that contain a face
 ```
 
-Every second it fetches `http://$CAM_IP/capture` (default `192.168.20.71`),
-runs YuNet (score ≥ 0.9, as in the zoo demo; change with `--score`), and prints
-the timestamp, fetch time, detection time, number of faces, and each face's
-score and box. At the end it prints the detection rate, mean score, and mean
+Every second it fetches `http://$CAM_IP/capture` (default `192.168.20.71`;
+`--interval 0` polls back to back), or with `--source stream` it reads the
+MJPEG stream at `http://$CAM_IP:81/stream` and processes every frame. It runs YuNet (score ≥ 0.9, as in the zoo demo; change with `--score`), and prints
+the timestamp, `t` (seconds since the measured part started), the time spent
+waiting for the frame, detection time, number of faces, the best score (0 if no
+face), and each face's score and box. At the end it prints the detection rate, mean score, and mean
 fetch and detection times.
 
 `--preview` shows each frame in a window, scaled up 2x, with the face box, its
-score, and the running count of frames with a face. Press `q` to stop; the
+score, `t`, and the running count of frames with a face. Press `q` to stop; the
 window also closes when the run ends. `--warmup N` first shows N seconds
 labelled WARM-UP (e.g. to position yourself) that are not measured or saved,
 then continues straight into the measured `--seconds` in the same window. On
@@ -126,3 +129,52 @@ The 10 misses were one run of consecutive frames, not scattered; every other
 frame had a face. The scores sit just above the 0.9 threshold, so a small
 change in pose or lighting can push a visible face below it. Try
 `--score 0.7` if faces that are clearly in view get missed.
+
+### Second test session (2026-10-01)
+
+All runs: stream unless noted, CPU, nothing saved.
+
+**Frame rate (20 s each):**
+
+| Source | fps | mean wait per frame | mean YuNet |
+|---|---:|---:|---:|
+| `/capture`, back to back (`--interval 0`) | 3.05 | 325 ms | 2.4 ms |
+| MJPEG stream (port 81) | 4.43 | 221 ms | 2.4 ms |
+
+The stream is about 45% faster because there is no new HTTP request per frame.
+A face was in view during part of both runs (the protocol asked for nobody in
+view). That barely matters for fps: detection is under 1% of the time per
+frame, so the camera link sets the frame rate.
+
+**Head-angle test** (`--score 0.7`, 40 s in four 10 s blocks: facing / ~30° /
+~60° / profile): 168/183 frames with a face (92%), 30 of 168 detections between
+0.7 and 0.9. The per-block numbers did not follow the intended angles (the ~60°
+and profile blocks scored highest, 100% detection, mean 0.92/0.91), so the head
+angle was most likely not held per block. They are not reported as an angle
+result. What the run does show: all 15 misses came in two ~1.5 s gaps, and
+before each one the score slid from ~0.86 to 0.72–0.79. A 0.7 threshold keeps a
+turning face a few frames longer than 0.9 does. To redo: hold each angle until
+the window's `t` passes 10, 20 and 30.
+
+**Walk-by test** (`--score 0.7`, 60 s, six intended passes at ~2 m): 104/273
+frames with a face (38%), in 9 groups of detections (a new group after ≥1 s
+without a face):
+
+| # | t (s) | frames with face | max score | box at max (px) | largest box (px) |
+|---:|---|---:|---:|---:|---:|
+| 1 | 0.0–1.4 | 7 | 0.912 | 77×97 | 84×101 |
+| 2 | 5.5–7.6 | 10 | 0.927 | 99×113 | 97×122 |
+| 3 | 10.6–14.4 | 18 | 0.921 | 67×105 | 95×113 |
+| 4 | 20.5–23.9 | 16 | 0.919 | 82×104 | 100×126 |
+| 5 | 30.7–33.2 | 12 | 0.933 | 72×98 | 81×100 |
+| 6 | 37.5–39.1 | 8 | 0.908 | 82×108 | 106×108 |
+| 7 | 44.0–45.9 | 10 | 0.918 | 68×87 | 90×97 |
+| 8 | 51.4–53.2 | 9 | 0.907 | 91×101 | 92×101 |
+| 9 | 56.5–60.1 | 14 | 0.857 | 88×90 | 92×92 |
+
+Groups 1 and 9 sit at the start and end of the run (probably near the camera
+before and after walking), so groups 2–8 are the candidate passes; they have
+not been matched to the pass types yet. Each detected pass lasted 1.6–3.8 s
+(8–18 frames at ~4.5 fps). No face narrower than 47 px was detected, and most
+boxes were 70–100 px wide in the 240x240 frame. That suggests the passes came
+closer than 2 m, or that faces at a true 2 m were not detected at all.
