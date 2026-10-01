@@ -1,2 +1,6 @@
 CameraWebServer/secrets.h
 docs/
+.venv/
+models/
+data/
+__pycache__/
