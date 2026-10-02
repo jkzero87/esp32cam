@@ -1,35 +1,46 @@
-# Where things stand (2026-10-01, PC turned off at ~17:50)
+# Next (written 2026-10-02, 18:52, for 2026-10-03)
 
 Everything must stop by 18:55 (PC off ~19:00): `tools/stop_at.sh HH:MM PID PATTERN`.
 
-## Working
-- ESP32-CAM (AI-Thinker, GC2145, RGB565 240x240) serving `/capture` and the
-  MJPEG stream (~4.5 fps).
-- PC side: YuNet detection, SFace recognition (threshold 0.45 from the LFW
-  impostor test, confirmation 2 of 3 frames), `enroll.py`, `--add-embeddings`.
-- Greeter with the local Qwen3.5-4B (CPU only on :8093, ~9 tok/s): greets by
-  name in Spanish; first word ~2.5 s cold.
-- Phase 4 code: Postgres schema `cam` (role `camuser`, `.env` gitignored),
-  fact extraction with filters, facts in the greeting prompt, consented
-  enrollment of unknown faces, "olvídame". Unit tests pass
-  (`tests/test_memory.py`).
+## State at the end of 2026-10-02
+- Camera OK (192.168.20.71, 240x240). `cam.people`: juan (consent recorded
+  2026-10-02 15:38), 1 fact ("Esperando el partido de la selección").
+  `data/gallery/juan.npy` (20 embeddings). `pc/status.py` shows all of it.
+- Fact eval on the 4B: run 2 (`tests/fact_eval/run_20261002_1749.log`) final
+  **PASS** after Juan's eye review (0 leaks, 0 hallucinated facts, recall
+  77.8%). Since then (not re-evaluated): facts forced to third person
+  (prompt + `memory.third_person`).
+- Greeter fixes today: Ctrl+C during the save is ignored (3rd force-quits),
+  grounding check drops facts with words not said, system prompt says it is a
+  camera on a desk with no body.
 
-## Not yet verified live
-The first live run of (b) memory and (c) unknown flow stored nothing: facts
-were never extracted (the conversation was ended by Ctrl+C before the
-extraction ran), and the consent answer was not taken as a yes (a stale
-empty line from the terminal is the likely cause). Both are fixed (Ctrl+C now
-finishes the open conversation and saves its facts; pending input is
-discarded before each question) but not retested live.
+## 1. First job: fact eval on the 27B (:8092)
+Run the same eval (RULE.md as amended twice, 24 cases, 3 runs) against the
+27B on :8092, only when es-eval is not using it (es-eval is closed):
 
-State left: `cam.people` = juan (consent_at NULL, enrolled by hand), 0 facts;
-`data/gallery/juan.npy` (20 embeddings); no "prueba" anywhere.
+```sh
+LLM_URL=http://127.0.0.1:8092/v1 .venv/bin/python tests/fact_eval/run_eval.py --out data/fact_eval_27b.jsonl \
+  | tee tests/fact_eval/run_$(date +%Y%m%d_%H%M)_27b.log
+```
 
-## Next
-1. **Rerun live tests (b) and (c)** (commands in README, "Phase 4"). Start
-   `llama-server` on :8093 first, with `tools/stop_at.sh 18:55`.
-2. **Compare the 4B and the 27B as the conversation model** (the 27B on :8092
-   only when es-eval is not using it): greeting latency, reply speed, quality
-   of greetings, and whether stored facts are mentioned naturally.
-3. Then: impostor test with other people on another day; decide whether
-   `--add-embeddings` is ever turned on.
+The 27B becomes the greeter default (`LLM_URL`) **only if** it passes RULE.md
+**and** Juan's eye review. Note: `NEXT_27B.md` was referenced for this step but
+does not exist; the command above is the plan. Compare with the 4B: leaks,
+hallucinations, recall, reply latency.
+
+## 2. Live test (c): unknown flow + forget
+Not done today. Only the "no answer" path was verified (18:08, nothing
+stored). Run with an empty temporary gallery: "sí" → name "prueba" → talk →
+"olvídame" → "sí"; check with `pc/status.py --gallery-dir /tmp/empty_gallery`
+after each step (README, "Phase 4").
+
+## 3. One live conversation (memory)
+Check that stored facts come out in third person (fix made after today's
+live tests) and that the greeting uses a stored fact (verified with the 4B at
+18:07, 1 fact in the prompt).
+
+## 4. Known 4B weaknesses to compare against the 27B
+- Slang: "chelas" (beers) not understood.
+- Invented details in replies (e.g. "veo y escucho").
+- No inference of durable traits ("esperando el partido de la selección" →
+  never "es hincha de la Selección").
