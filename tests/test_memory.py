@@ -14,7 +14,8 @@ from offline import guard  # noqa: E402
 
 guard("tests/test_memory.py")  # no model, no network (Postgres via libpq still works)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pc"))
-from memory import Memory, is_clear_yes, name_slug, parse_facts, wants_forget  # noqa: E402
+from memory import (Memory, ground_facts, is_clear_yes, name_slug, parse_facts, ungrounded,  # noqa: E402
+                    wants_forget)
 
 FAIL = []
 
@@ -54,6 +55,23 @@ check("name: empty", name_slug("  "), "")
 check("forget: 'olvídame'", wants_forget("por favor olvídame"), True)
 check("forget: 'BÓRRAME ya'", wants_forget("BÓRRAME ya"), True)
 check("forget: unrelated", wants_forget("no me olvides el café"), False)
+
+print("== grounding: names and content words must come from what was said")
+said = ["estoy viendo videos de la AYN odin 3"]
+check("17:45 live case: hallucinated title dropped",
+      ground_facts(["Vea videos de Assassin's Creed Odyssey"], said),
+      ([], [("Vea videos de Assassin's Creed Odyssey", "no está en lo que dijo: Assassin, Creed, Odyssey")]))
+check("the real product name is kept (case-insensitive)", ungrounded("Ve videos de la AYN Odin 3", said), [])
+check("a wrong model number is not inflection", ungrounded("Ve videos de la AYN Odin 2", said), ["2"])
+check("accents and inflection: Esperando el partido de la selección",
+      ungrounded("Esperando el partido de la selección", ["estoy esperando el partido de la seleccion colombia"]), [])
+check("verb ending trabajo -> trabaja", ungrounded("Trabaja como diseñadora gráfica",
+                                                  ["Trabajo como diseñadora gráfica."]), [])
+check("plural suculentas ~ suculenta", ungrounded("Colecciona suculentas", ["Colecciono una suculenta"]), [])
+check("framing verb allowed, invented noun not", ungrounded("Tiene un labrador como mascota",
+                                                            ["Me gustan los perros, tengo un labrador."]), ["mascota"])
+check("invented place dropped", ungrounded("Vive en Medellín", ["Me mudé a Manizales hace dos meses."]), ["Medellín"])
+check("short words and stopwords ignored", ungrounded("Le gusta el té", ["Prefiero el té verde"]), [])
 
 print("== database round trip (cam schema)")
 tmp = Path(tempfile.mkdtemp())

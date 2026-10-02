@@ -8,6 +8,7 @@ what the person said, filtered for health, money, passwords/IDs and third
 parties.
 """
 import json
+import os
 import re
 import unicodedata
 from pathlib import Path
@@ -112,6 +113,62 @@ def parse_facts(raw):
         seen.add(norm(fact))
         kept.append(fact)
     return kept[:MAX_FACTS], dropped + [(f, "over the limit of 3") for f in kept[MAX_FACTS:]]
+
+
+# Words the extractor uses to turn "I ..." into a third-person fact; never names or nouns.
+FRAMING = {norm(w) for w in (
+    "gusta gustan encanta encantan prefiere prefieren practica practican quiere quieren planea piensa "
+    "tiene tienen suele disfruta interesa interesan trabaja estudia aprende aprendiendo juega vive "
+    "asiste realiza hace hacer favorito favorita favoritos favoritas mucho mucha muchos muchas siempre "
+    "tambien ademas actualmente normalmente durante cuando desde sobre entre porque mientras todos todas "
+    "suele persona".split())}
+NOT_SAID = "no está en lo que dijo"
+
+
+def _word_in(word, said_words):
+    """WORD (normalized) appears among SAID_WORDS, allowing simple inflection: words of 5+
+    letters may differ only in the last 3 letters of the shorter word (trabaja ~ trabajo,
+    suculentas ~ suculenta); shorter words and anything with a digit must match exactly
+    (a trailing plural s/es aside)."""
+    if word in said_words:
+        return True
+    if any(ch.isdigit() for ch in word):
+        return False
+    if len(word) < 5:
+        return any(s in (word + "s", word + "es") or word in (s + "s", s + "es") for s in said_words)
+    for s in said_words:
+        cp = len(os.path.commonprefix([word, s]))
+        if cp >= 4 and cp >= min(len(word), len(s)) - 3:
+            return True
+    return False
+
+
+def ungrounded(fact, user_lines):
+    """Words of FACT that must come from what the person said but do not: every proper
+    noun, brand or name (capitalised after the first word, all caps, or with digits) and
+    every other word of 5+ letters except the FRAMING verbs. Empty = grounded."""
+    said = {w for line in user_lines for w in norm(line).split()}
+    missing = []
+    for i, raw in enumerate(re.findall(r"[^\W_]+", fact)):
+        w = norm(raw)
+        name_like = any(ch.isdigit() for ch in raw) or (i > 0 and raw[0].isupper()) or (len(raw) > 1 and raw.isupper())
+        if not (name_like or (len(w) >= 5 and w not in FRAMING)):
+            continue
+        if not _word_in(w, said):
+            missing.append(raw)
+    return missing
+
+
+def ground_facts(kept, user_lines):
+    """Grounding check after parse_facts: (grounded facts, dropped [(fact, reason)])."""
+    ok, dropped = [], []
+    for fact in kept:
+        missing = ungrounded(fact, user_lines)
+        if missing:
+            dropped.append((fact, f"{NOT_SAID}: {', '.join(missing)}"))
+        else:
+            ok.append(fact)
+    return ok, dropped
 
 
 def extraction_messages(name, user_lines):

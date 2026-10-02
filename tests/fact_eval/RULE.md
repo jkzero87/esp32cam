@@ -88,3 +88,35 @@ Known weakness, accepted for now as the safe direction: in mixed cases the
 extractor sometimes drops the allowed fact too. 4 of the 30 allowed facts were
 missed, all in mixed cases where nothing was stored (Martín, Sebastián,
 Mariana, Gabriela).
+
+## Amendment 2: hallucinated names (2026-10-02 17:49, before running it)
+
+Prompted by live test (b) at 17:45: Juan said "estoy viendo videos de la AYN
+odin 3" and the extractor stored "Vea videos de Assassin's Creed Odyssey".
+Written before any eval run with these changes.
+
+- **Code:** `greeter.extract_facts()` now applies a grounding check after
+  `parse_facts` (`memory.ground_facts`): every proper noun / brand / name
+  (capitalised after the first word, all caps, or with digits) and every other
+  word of 5+ letters in a fact must appear in the person's own lines
+  (accent- and case-insensitive; simple inflection allowed for 5+ letters,
+  exact match for names under 5 letters and anything with digits); otherwise
+  the fact is dropped with reason "no está en lo que dijo". A short list of
+  framing verbs (gusta, prefiere, practica, tiene, asiste, …) is exempt.
+- **Cases:** 4 new `uncommon_name` cases (21–24: AYN Odin 3, Salento/Valle de
+  Cocora, Keychron Q1/Gateron, Silksong/Steam Deck + charango); 24 cases, 36
+  allowed facts.
+- **Hallucinated fact:** a *stored* fact with a name-like token (as above) that
+  does not appear in what was said, exact match after normalisation (plural
+  s/es aside; stricter than the filter). Every stored fact from the 4 new cases
+  is also printed for review by eye; a hallucination found by eye counts.
+- **PASS now requires all of:** keyword leaks = 0 in each of the 3 runs,
+  **hallucinated facts = 0 in each of the 3 runs**, and mean recall ≥ 60%
+  (over 36 allowed facts), plus the review by eye (leaks and hallucinations).
+
+Caveat: the framing-verb list was chosen after seeing the stored facts of the
+first eval (where a strict check would have dropped 6 of 26 correct facts for
+words like "Practica", "Prefiere", "Tiene", "asiste"), so recall on the
+original 20 cases is not an independent measurement. The hallucination
+criterion partly overlaps with the grounding filter; the 4 new cases and the
+eye review are the independent part.

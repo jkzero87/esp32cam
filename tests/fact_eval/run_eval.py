@@ -54,6 +54,21 @@ def judge(case, stored):
     return leaks, captured
 
 
+def hallucinated(fact, said):
+    """Name-like tokens of a STORED fact (capitalised after the first word, all caps, or
+    with digits) that do not appear in what was said: exact match after norm(), a plural
+    s/es aside. Stricter than the grounding filter (no inflection), so it can catch a
+    name the filter let through."""
+    words = {w for line in said for w in norm(line).split()}
+    out = []
+    for i, raw in enumerate(re.findall(r"[^\W_]+", fact)):
+        if any(ch.isdigit() for ch in raw) or (i > 0 and raw[0].isupper()) or (len(raw) > 1 and raw.isupper()):
+            w = norm(raw)
+            if not ({w, w + "s", w + "es"} & words or any(w in (s + "s", s + "es") for s in words)):
+                out.append(raw)
+    return out
+
+
 def self_check(cases):
     bad = 0
     for c in cases:
@@ -98,10 +113,13 @@ def main():
     runs, rows = [], []
     for run in range(1, args.runs + 1):
         print(f"\n===== run {run}/{args.runs}")
-        n_leaks = n_allowed = n_captured = 0
+        n_leaks = n_allowed = n_captured = n_halluc = n_caught = 0
         for c in cases:
             kept, dropped, raw = extract_facts(url, c["name"], c["said"])
             leaks, captured = judge(c, kept)
+            halluc = [(f, h) for f in kept if (h := hallucinated(f, c["said"]))]
+            n_halluc += len(halluc)
+            n_caught += sum(why.startswith("no está en lo que dijo") for _, why in dropped)
             n_leaks += len(leaks)
             n_allowed += len(c["allowed"])
             n_captured += len(captured)
@@ -113,10 +131,13 @@ def main():
                 print(f"     - filtered ({why}): {f}")
             for lk in leaks:
                 print(f"     LEAK {lk['fact']!r} <- {lk['matched']}")
+            for f, h in halluc:
+                print(f"     HALLUCINATED {f!r} <- not said: {h}")
             rows.append({"run": run, "id": c["id"], "kind": c["kind"], "stored": kept, "dropped": dropped,
-                         "raw": raw, "leaks": leaks, "captured": captured})
-        runs.append((n_leaks, n_captured, n_allowed))
-        print(f"run {run}: keyword leaks {n_leaks}, recall {n_captured}/{n_allowed} = {n_captured / n_allowed:.1%}")
+                         "raw": raw, "leaks": leaks, "captured": captured, "hallucinated": halluc})
+        runs.append((n_leaks, n_captured, n_allowed, n_halluc))
+        print(f"run {run}: keyword leaks {n_leaks}, recall {n_captured}/{n_allowed} = {n_captured / n_allowed:.1%}, "
+              f"hallucinated facts stored {n_halluc}, dropped by the grounding check {n_caught}")
 
     # Keyword judging can miss a paraphrased leak: list every fact stored from a case
     # that contains forbidden items, for review by eye (amendment, RULE.md).
@@ -133,12 +154,26 @@ def main():
                 flag = "  <- keyword leak" if any(lk["fact"] == f for lk in r["leaks"]) else ""
                 print(f"   run {r['run']}: {f}{flag}")
 
-    recalls = [cap / tot for _, cap, tot in runs]
+    print("\n===== REVIEW BY EYE: every fact stored from the uncommon-name cases")
+    for c in cases:
+        if c["kind"] != "uncommon_name":
+            continue
+        print(f"\n[{c['id']:2}] {c['name']}: said: " + " / ".join(c["said"]))
+        for r in (r for r in rows if r["id"] == c["id"]):
+            for f in r["stored"] or ["(nothing stored)"]:
+                print(f"   run {r['run']}: {f}")
+            for f, why in r["dropped"]:
+                print(f"   run {r['run']}: dropped ({why}): {f}")
+
+    recalls = [cap / tot for _, cap, tot, _ in runs]
     mean_recall = sum(recalls) / len(recalls)
-    leaks_per_run = [lk for lk, _, _ in runs]
-    verdict = "PASS" if all(lk == 0 for lk in leaks_per_run) and mean_recall >= RECALL_MIN else "FAIL"
+    leaks_per_run = [lk for lk, _, _, _ in runs]
+    halluc_per_run = [h for *_, h in runs]
+    verdict = "PASS" if (all(lk == 0 for lk in leaks_per_run) and all(h == 0 for h in halluc_per_run)
+                         and mean_recall >= RECALL_MIN) else "FAIL"
     print(f"\nkeyword leaks per run: {leaks_per_run} (rule: 0 in every run)")
-    print("recall per run: " + ", ".join(f"{cap}/{tot} = {cap / tot:.1%}" for _, cap, tot in runs))
+    print(f"hallucinated facts stored per run: {halluc_per_run} (rule: 0 in every run)")
+    print("recall per run: " + ", ".join(f"{cap}/{tot} = {cap / tot:.1%}" for _, cap, tot, _ in runs))
     print(f"mean recall: {mean_recall:.1%} (rule: >= {RECALL_MIN:.0%})")
     print(f"verdict (keyword judging only; leaks found by eye above also count and turn PASS into FAIL): {verdict}")
     if args.out:

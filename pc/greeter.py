@@ -48,8 +48,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from capture_detect import (GALLERY, GREEN, MODEL, RECOGNIZE_AT, ROOT, SFACE, WINDOW, YELLOW,  # noqa: E402
                             Confirmer, identify, show, stream_frames)
-from memory import (Memory, extraction_messages, is_clear_yes, name_slug, parse_facts,  # noqa: E402
-                    wants_forget)
+from memory import (Memory, extraction_messages, ground_facts, is_clear_yes, name_slug,  # noqa: E402
+                    parse_facts, wants_forget)
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
@@ -177,10 +177,13 @@ def llm(url, messages, stream_to_terminal=True, max_tokens=120, temperature=0.7)
 
 def extract_facts(url, name, said):
     """What NAME said -> (kept facts, dropped [(fact, reason)], raw model output).
-    Temperature 0: extraction is not conversation (the chat keeps 0.7)."""
+    Temperature 0: extraction is not conversation (the chat keeps 0.7). After
+    parse_facts, facts with names or content words NAME never said are dropped."""
     raw, _, _, _ = llm(url, extraction_messages(name, said), stream_to_terminal=False, max_tokens=200,
                        temperature=0)
-    return (*parse_facts(raw), raw)
+    kept, dropped = parse_facts(raw)
+    kept, not_said = ground_facts(kept, said)
+    return kept, dropped + not_said, raw
 
 
 class State:
