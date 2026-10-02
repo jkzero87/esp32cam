@@ -11,7 +11,7 @@ only, 4 threads, thinking off. Full output: `run_20261002_1651.log`.
 | recall | 26/30 = 86.7% | 26/30 = 86.7% | 26/30 = 86.7% |
 
 Mean recall **86.7%** (≥ 60%). Keyword verdict: **PASS**.
-**Final verdict pending Juan's review by eye** of the 12 cases with forbidden
+**Final verdict: PASS** after Juan's review by eye (see RULE.md, "Eye review"). Reviewed: the 12 cases with forbidden
 items (list at the end of the log). Claude's own read of that list found no
 paraphrased leak: the only facts stored from those cases are the allowed
 ones (violin, French, coffee, Python, labrador, Once Caldas).

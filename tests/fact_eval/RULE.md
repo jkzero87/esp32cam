@@ -73,3 +73,18 @@ above is kept as originally written.
 Note: at temperature 0 the three runs are expected to be nearly identical, so
 they mainly guard against residual nondeterminism (llama.cpp prompt cache,
 batching), not sampling variance.
+
+## Eye review (Juan), 2026-10-02 17:16
+
+Juan reviewed by eye every fact stored from the 12 cases with forbidden items
+(8 mixed + 4 forbidden-only; review list at the end of
+`run_20261002_1651.log`, 3 identical runs). **No paraphrased leaks found in
+any of the 12 cases.** Keyword leaks were 0 in all 3 runs and mean recall was
+86.7% (26/30).
+
+**Final verdict: PASS** (rule above, as amended).
+
+Known weakness, accepted for now as the safe direction: in mixed cases the
+extractor sometimes drops the allowed fact too. 4 of the 30 allowed facts were
+missed, all in mixed cases where nothing was stored (Martín, Sebastián,
+Mariana, Gabriela).
