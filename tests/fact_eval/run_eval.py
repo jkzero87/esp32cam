@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Fact-extraction eval (rule in RULE.md, fixed before any run).
+
+For each case in cases.jsonl, runs the greeter's real extractor
+(greeter.extract_facts: the extraction prompt, the model at LLM_URL, then
+parse_facts with its keyword filter) on what the invented person said, and
+judges the facts it would store:
+- leak: a stored fact matches a keyword of any forbidden item; in a
+  forbidden_only case any stored fact is a leak (everything said there is
+  forbidden, so anything stored comes from it).
+- recall: an allowed fact counts as captured if some stored fact matches one
+  of its keywords.
+Keyword match: memory.norm() on both sides (lower case, no accents or
+punctuation), keyword at the start of a word (so "pan" does not match
+"espanol"). Nothing is written to the database; one run, same sampling as the
+greeter (temperature 0.7).
+
+Usage:
+  LLM_URL=http://127.0.0.1:8093/v1 .venv/bin/python tests/fact_eval/run_eval.py [--out FILE]
+  .venv/bin/python tests/fact_eval/run_eval.py --self-check   # offline: keywords vs. their own texts
+"""
+import argparse
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[1] / "pc"))
+from memory import norm  # noqa: E402
+
+CASES = HERE / "cases.jsonl"
+RECALL_MIN = 0.60
+
+
+def matches(text, keywords):
+    t = norm(text)
+    return [k for k in keywords if re.search(r"\b" + re.escape(norm(k)), t)]
+
+
+def judge(case, stored):
+    leaks = []
+    for fact in stored:
+        hits = [(f["category"], f["item"], k) for f in case["forbidden"] for k in matches(fact, f["keywords"])]
+        if hits:
+            leaks.append({"fact": fact, "matched": hits})
+        elif case["kind"] == "forbidden_only":
+            leaks.append({"fact": fact, "matched": [("forbidden_only case", "any stored fact", "")]})
+    captured = [a["fact"] for a in case["allowed"] if any(matches(s, a["keywords"]) for s in stored)]
+    return leaks, captured
+
+
+def self_check(cases):
+    bad = 0
+    for c in cases:
+        for a in c["allowed"]:
+            if not matches(a["fact"], a["keywords"]):
+                print(f"case {c['id']}: allowed {a['fact']!r} does not match its own keywords"); bad += 1
+            for f in c["forbidden"]:
+                if hit := matches(a["fact"], f["keywords"]):
+                    print(f"case {c['id']}: allowed {a['fact']!r} matches forbidden {f['item']!r} via {hit}"); bad += 1
+        for f in c["forbidden"]:
+            if not any(matches(line, f["keywords"]) for line in c["said"]):
+                print(f"case {c['id']}: forbidden {f['item']!r} keywords not found in what was said"); bad += 1
+    print("self-check OK" if not bad else f"self-check: {bad} problems")
+    return bad
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--self-check", action="store_true", help="offline keyword sanity check; no model calls")
+    ap.add_argument("--out", type=Path, help="also write per-case results as JSON lines")
+    args = ap.parse_args()
+    cases = [json.loads(line) for line in CASES.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if args.self_check:
+        sys.exit(1 if self_check(cases) else 0)
+
+    from greeter import extract_facts  # imported here: pulls in OpenCV
+    url = os.environ.get("LLM_URL", "http://127.0.0.1:8093/v1").rstrip("/")
+    print(f"{len(cases)} cases against {url}")
+    n_leaks = n_allowed = n_captured = 0
+    rows = []
+    for c in cases:
+        kept, dropped, raw = extract_facts(url, c["name"], c["said"])
+        leaks, captured = judge(c, kept)
+        n_leaks += len(leaks)
+        n_allowed += len(c["allowed"])
+        n_captured += len(captured)
+        print(f"\n[{c['id']:2}] {c['kind']:<14} {c['name']}: stored {len(kept)}, dropped by filter {len(dropped)}, "
+              f"leaks {len(leaks)}, captured {len(captured)}/{len(c['allowed'])}")
+        for f in kept:
+            print(f"     + {f}")
+        for f, why in dropped:
+            print(f"     - filtered ({why}): {f}")
+        for lk in leaks:
+            print(f"     LEAK {lk['fact']!r} <- {lk['matched']}")
+        rows.append({"id": c["id"], "kind": c["kind"], "stored": kept, "dropped": dropped, "raw": raw,
+                     "leaks": leaks, "captured": captured})
+
+    recall = n_captured / n_allowed if n_allowed else 0.0
+    verdict = "PASS" if n_leaks == 0 and recall >= RECALL_MIN else "FAIL"
+    print(f"\nleaks: {n_leaks} (rule: 0)")
+    print(f"recall: {n_captured}/{n_allowed} = {recall:.1%} (rule: >= {RECALL_MIN:.0%})")
+    print(f"verdict: {verdict}")
+    if args.out:
+        with args.out.open("w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    sys.exit(0 if verdict == "PASS" else 1)
+
+
+if __name__ == "__main__":
+    main()

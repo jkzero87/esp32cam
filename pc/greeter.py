@@ -146,6 +146,12 @@ def llm(url, messages, stream_to_terminal=True, max_tokens=120):
     return text, first, n_tok, tps or n_tok / max(time.perf_counter() - t0, 1e-9)
 
 
+def extract_facts(url, name, said):
+    """What NAME said -> (kept facts, dropped [(fact, reason)], raw model output)."""
+    raw, _, _, _ = llm(url, extraction_messages(name, said), stream_to_terminal=False, max_tokens=200)
+    return (*parse_facts(raw), raw)
+
+
 class State:
     """Shared between the camera loop (main thread) and the conversation thread."""
 
@@ -214,8 +220,7 @@ def person_conversation(st, mem, args, url, name, t_confirm):
         metric(args.metrics, event="facts", name=name, stored=0, dropped=0, end=end, user_lines=0)
         return
     print("   [extrayendo hechos…]", flush=True)
-    raw, _, _, _ = llm(url, extraction_messages(display, said), stream_to_terminal=False, max_tokens=200)
-    kept, dropped = parse_facts(raw)
+    kept, dropped, _ = extract_facts(url, display, said)
     n = mem.add_facts(name, kept, started)
     print(f"   [memoria: {n} hecho(s) guardado(s)" + "".join(f"\n    + {f}" for f in kept)
           + "".join(f"\n    - descartado ({why}): {f}" for f, why in dropped) + "]", flush=True)
