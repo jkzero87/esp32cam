@@ -23,6 +23,8 @@ EXTRACT_SYSTEM = (
     "Extraes datos para una memoria personal. Te doy frases que dijo {name}. "
     "Devuelve como máximo 3 hechos breves y duraderos sobre {name} (gustos, aficiones, planes, "
     "trabajo, costumbres), en español, cada uno en una frase corta en tercera persona. "
+    "Escribe SIEMPRE en tercera persona («Le gusta…», «Va al…», «Juega…»), nunca en primera "
+    "(«Me gusta…», «Voy al…», «Juego…»). "
     "Usa solo lo que dijo {name}; no inventes. "
     "NO incluyas nada sobre salud, dinero, contraseñas, claves o números de identificación, "
     "ni nada sobre otras personas. "
@@ -168,6 +170,40 @@ def ground_facts(kept, user_lines):
             dropped.append((fact, f"{NOT_SAID}: {', '.join(missing)}"))
         else:
             ok.append(fact)
+    return ok, dropped
+
+
+FIRST_PERSON = "en primera persona"
+# Safe rewrites of a first-person start into third person; anything else first-person is dropped.
+FIRST_TO_THIRD = [(re.compile(r"^me (gusta|gustan|encanta|encantan|interesa|interesan)\b", re.I), r"Le \1"),
+                  (re.compile(r"^mis\b", re.I), "Sus"), (re.compile(r"^mi\b", re.I), "Su")]
+FIRST_PERSON_WORDS = {"yo", "me", "mi", "mis", "conmigo"}
+
+
+def is_first_person(fact):
+    """A fact written as the person speaking: a first-person pronoun or possessive anywhere,
+    or a first word that is a first-person present verb (voy, soy, estoy, juego, colecciono;
+    an accented -ó like "Viajó" is third-person past and allowed)."""
+    words = re.findall(r"[^\W_]+", fact)
+    if not words:
+        return False
+    if {norm(w) for w in words} & FIRST_PERSON_WORDS:
+        return True
+    first = words[0]
+    return norm(first) in {"voy", "soy", "estoy", "doy"} or (len(first) >= 3 and first.lower().endswith("o"))
+
+
+def third_person(kept):
+    """Rewrite or drop facts in first person: (facts, dropped [(fact, reason)])."""
+    ok, dropped = [], []
+    for fact in kept:
+        new = fact
+        for rx, repl in FIRST_TO_THIRD:
+            new = rx.sub(repl, new, count=1)
+        if is_first_person(new):
+            dropped.append((fact, FIRST_PERSON))
+        else:
+            ok.append(new)
     return ok, dropped
 
 

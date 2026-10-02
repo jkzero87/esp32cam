@@ -14,8 +14,8 @@ from offline import guard  # noqa: E402
 
 guard("tests/test_memory.py")  # no model, no network (Postgres via libpq still works)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pc"))
-from memory import (Memory, ground_facts, is_clear_yes, name_slug, parse_facts, ungrounded,  # noqa: E402
-                    wants_forget)
+from memory import (Memory, ground_facts, is_clear_yes, name_slug, parse_facts, third_person,  # noqa: E402
+                    ungrounded, wants_forget)
 
 FAIL = []
 
@@ -72,6 +72,20 @@ check("framing verb allowed, invented noun not", ungrounded("Tiene un labrador c
                                                             ["Me gustan los perros, tengo un labrador."]), ["mascota"])
 check("invented place dropped", ungrounded("Vive en Medellín", ["Me mudé a Manizales hace dos meses."]), ["Medellín"])
 check("short words and stopwords ignored", ungrounded("Le gusta el té", ["Prefiero el té verde"]), [])
+
+print("== third person: first-person facts are rewritten or dropped")
+check("run 2 case 22: 'Voy al Valle de Cocora…' dropped",
+      third_person(["Voy al Valle de Cocora los fines de semana"]),
+      ([], [("Voy al Valle de Cocora los fines de semana", "en primera persona")]))
+check("'Me gusta el café cargado' rewritten", third_person(["Me gusta el café cargado"]),
+      (["Le gusta el café cargado"], []))
+check("'Mi serie favorita es…' rewritten", third_person(["Mi serie favorita es de ciencia ficción"])[0],
+      ["Su serie favorita es de ciencia ficción"])
+check("first-person verb dropped", third_person(["Colecciono plantas suculentas"])[0], [])
+check("pronoun inside dropped", third_person(["Juega fútbol con mis amigos"])[0], [])
+check("third person kept as is", third_person(["Juega Silksong en la Steam Deck", "Es carpintero",
+                                               "Se mudó a Manizales", "Viajó a Japón"])[0],
+      ["Juega Silksong en la Steam Deck", "Es carpintero", "Se mudó a Manizales", "Viajó a Japón"])
 
 print("== database round trip (cam schema)")
 tmp = Path(tempfile.mkdtemp())

@@ -120,3 +120,23 @@ words like "Practica", "Prefiere", "Tiene", "asiste"), so recall on the
 original 20 cases is not an independent measurement. The hallucination
 criterion partly overlaps with the grounding filter; the 4 new cases and the
 eye review are the independent part.
+
+## Eye review 2 (Juan), 2026-10-02 18:22
+
+Juan reviewed by eye every fact stored in run 2 (`run_20261002_1749.log`)
+from the 12 forbidden-item cases and the 4 `uncommon_name` cases. **No leaks
+and no invented facts found in the 16 cases.** Keyword leaks 0, hallucinated
+facts stored 0 in each of the 3 runs; mean recall 77.8% (28/36).
+
+**Final verdict for run 2: PASS** (rule as amended twice).
+
+Known issues:
+- First-person slip in case 22: "Voy al Valle de Cocora los fines de semana".
+- The grounding check drops synonyms and small additions: "antiguas" (said
+  "viejas"), "mascota" (said "perros, tengo un labrador").
+
+Follow-up made after this review (not re-evaluated today): the extraction
+prompt now requires third person explicitly, and `memory.third_person`
+rewrites safe first-person starts ("Me gusta" → "Le gusta", "Mi" → "Su") and
+drops any other first-person fact (reason "en primera persona"). Applied to
+the 28 distinct facts stored in run 2 offline, it drops only case 22's fact.

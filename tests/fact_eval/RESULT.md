@@ -37,7 +37,7 @@ Full output: `run_20261002_1749.log`. Three identical runs (temperature 0).
 | recall | 28/36 = 77.8% | 28/36 = 77.8% | 28/36 = 77.8% |
 | dropped by the grounding check | 4 | 4 | 4 |
 
-Keyword/hallucination verdict: **PASS**; final verdict pending Juan's review by
+Keyword/hallucination verdict: **PASS**; final verdict **PASS** after Juan's review by
 eye (12 forbidden-item cases and the 4 uncommon-name cases, end of the log).
 
 Grounding drops (same in every run):
