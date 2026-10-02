@@ -27,13 +27,16 @@ http://127.0.0.1:8093/v1).
 
 --gallery-dir chooses the gallery (default data/gallery). --metrics appends
 timings and counts (no text) to data/greeter_metrics.jsonl. Stops at --until
-(default 18:50) or on Ctrl+C.
+(default 18:50) or on Ctrl+C: the first ends the open conversation and saves its
+facts; while saving, a second is ignored with a notice and a third force-quits
+(that conversation's memory is lost).
 """
 import argparse
 import json
 import os
 import queue
 import select
+import signal
 import sys
 import termios
 import threading
@@ -58,7 +61,10 @@ ANSWER_TIMEOUT_S = 30
 SILENCE_END_S = 180
 LEFT_AFTER_S = 5  # unconfirmed this long = left, so detection flicker never re-greets
 DIVERSITY, CAP = 0.9, 20
-SYSTEM = ("Eres un asistente doméstico amable que ve la entrada de la casa a través de una cámara. "
+SYSTEM = ("Eres un asistente amable: una cámara sobre un escritorio, con una voz que habla por el terminal. "
+          "No tienes cuerpo: no puedes cocinar, traer, comprar ni hacer nada físico. Si te piden algo así, "
+          "dilo con amabilidad y sigue conversando; nunca prometas ni ofrezcas acciones que no puedes hacer "
+          "(tampoco tienes internet ni noticias). No inventes lo que ves: solo sabes quién ha llegado. "
           "Hablas en español, de forma cercana, informal y breve: una o dos frases como máximo. "
           "Acabas de ver llegar a {name}. Salúdale por su nombre.")
 FACTS_HINT = ("\nCosas que recuerdas de {name} de conversaciones anteriores (puedes mencionar una, "
@@ -73,6 +79,29 @@ def metric(enabled, **rec):
 
 
 STOPPING = threading.Event()  # set on Ctrl+C / --until: open conversations end and save their facts
+SAVING_MSG = "(guardando… espera unos segundos)"
+
+
+class CtrlC:
+    """SIGINT handler. 1st Ctrl+C: KeyboardInterrupt, so the main loop stops and the
+    open conversation ends and saves its facts. While saving (self.saving), the 2nd
+    is ignored with a notice; the 3rd force-quits and the memory is lost."""
+
+    def __init__(self, exit_fn=os._exit):
+        self.saving = False
+        self.ignored = 0
+        self.exit_fn = exit_fn
+
+    def __call__(self, signum=None, frame=None):
+        if not self.saving:
+            raise KeyboardInterrupt
+        self.ignored += 1
+        if self.ignored == 1:
+            print(f"\n{SAVING_MSG} Otro Ctrl+C fuerza la salida y se pierde la memoria de esta conversación.",
+                  flush=True)
+            return
+        print("\n(salida forzada: la memoria de esta conversación se ha perdido)", flush=True)
+        self.exit_fn(130)
 
 
 def read_line(prompt, timeout, fresh=False):
@@ -317,6 +346,8 @@ def main():
           f"threshold {RECOGNIZE_AT}; greet after {args.absent_minutes:g} min absent; stops at {args.until} "
           f"or Ctrl+C. Reply + Enter; empty line ends a conversation.", flush=True)
 
+    ctrl_c = CtrlC()
+    signal.signal(signal.SIGINT, ctrl_c)
     events = queue.Queue()
     worker = threading.Thread(target=conversation_worker, args=(events, st, mem, args, url), daemon=True)
     worker.start()
@@ -360,13 +391,14 @@ def main():
     except KeyboardInterrupt:
         print("\nstopped (Ctrl+C)", flush=True)
     finally:
+        ctrl_c.saving = True  # from here on Ctrl+C no longer interrupts the save (see CtrlC)
         STOPPING.set()  # an open conversation ends now and still saves its facts
         events.put(("stop", None, None))
         if args.preview:
             cv2.destroyAllWindows()
             cv2.waitKey(1)
         if worker.is_alive():
-            print("(cerrando: guardando la memoria de la conversación abierta…)", flush=True)
+            print(f"(cerrando) {SAVING_MSG}", flush=True)
             worker.join(timeout=90)
     return 0
 

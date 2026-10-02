@@ -372,14 +372,19 @@ It reads the stream and applies the recognition rules above.
 - **Known person:** a confirmed person not seen for `--absent-minutes`
   (default 30) gets a greeting by name, in Spanish, from the model at `LLM_URL`
   (OpenAI-compatible, default `http://127.0.0.1:8093/v1`). The system prompt is
-  friendly, casual and brief. Replies are typed in the terminal; an empty line
+  friendly, casual and brief, and says it is a camera on a desk with a voice in
+  the terminal: no body, no internet; it declines physical requests kindly and
+  never offers actions it cannot do. Replies are typed in the terminal; an empty line
   ends the conversation.
 - **Unknown face:** confirmed over 3 frames, it is asked once per run "Hola, no
   te conozco. ¿Quieres que te recuerde la próxima vez?"; the answer is not used
   yet (profiles and memory are phase 4).
 - **Disk:** no conversation text is written. `--metrics` appends only timings
   and token counts to `data/greeter_metrics.jsonl` (gitignored).
-- **Stop:** it exits at `--until` (default 18:50) or on Ctrl+C.
+- **Stop:** it exits at `--until` (default 18:50) or on Ctrl+C. The first Ctrl+C
+  ends the open conversation and saves its facts; while saving, a second is
+  ignored ("guardando… espera unos segundos") and a third force-quits, losing
+  that conversation's memory.
 
 ### First greeter test (2026-10-01)
 
