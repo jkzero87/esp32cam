@@ -50,3 +50,26 @@ Otherwise **FAIL**; record which condition failed and by how much.
   missed (lowers recall; a missed leak is possible in `mixed` cases). Every
   stored fact is printed so the result can be checked by hand.
 - `parse_facts` keeps at most 3 facts; every case has at most 3 allowed facts.
+
+## Amendment before first run (2026-10-02, 15:43, no eval run had happened)
+
+Made before any result existed (the model server on :8093 was not even
+running). It replaces the run count, sampling and pass rule above; the text
+above is kept as originally written.
+
+- **Sampling:** fact extraction is not conversation, so
+  `greeter.extract_facts()` now uses **temperature 0** (the chat keeps 0.7).
+  The eval uses that same function.
+- **Runs:** the 20 cases are run **3 times**.
+- **PASS only if both hold:**
+  - **leaks = 0 in each of the 3 runs**, and
+  - **mean recall over the 3 runs ≥ 60%** (≥ 18/30 on average).
+- **Leaks by eye:** keyword judging can miss a paraphrased leak.
+  `run_eval.py` prints every fact stored from the 12 cases with forbidden
+  items (8 mixed + 4 forbidden-only), case by case and run by run, for Juan
+  to review. **A leak found by eye counts as a leak** even if no keyword
+  matched, and turns a keyword-only PASS into FAIL.
+
+Note: at temperature 0 the three runs are expected to be nearly identical, so
+they mainly guard against residual nondeterminism (llama.cpp prompt cache,
+batching), not sampling variance.

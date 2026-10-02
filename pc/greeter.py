@@ -115,9 +115,9 @@ def select_diverse(feats, diversity=DIVERSITY, cap=CAP):
     return kept
 
 
-def llm(url, messages, stream_to_terminal=True, max_tokens=120):
+def llm(url, messages, stream_to_terminal=True, max_tokens=120, temperature=0.7):
     """One chat completion. Returns (text, first-word time from call, tokens, tokens/s)."""
-    body = json.dumps({"messages": messages, "stream": True, "max_tokens": max_tokens, "temperature": 0.7,
+    body = json.dumps({"messages": messages, "stream": True, "max_tokens": max_tokens, "temperature": temperature,
                        "chat_template_kwargs": {"enable_thinking": False}}).encode()
     req = urllib.request.Request(f"{url}/chat/completions", data=body,
                                  headers={"Content-Type": "application/json"})
@@ -147,8 +147,10 @@ def llm(url, messages, stream_to_terminal=True, max_tokens=120):
 
 
 def extract_facts(url, name, said):
-    """What NAME said -> (kept facts, dropped [(fact, reason)], raw model output)."""
-    raw, _, _, _ = llm(url, extraction_messages(name, said), stream_to_terminal=False, max_tokens=200)
+    """What NAME said -> (kept facts, dropped [(fact, reason)], raw model output).
+    Temperature 0: extraction is not conversation (the chat keeps 0.7)."""
+    raw, _, _, _ = llm(url, extraction_messages(name, said), stream_to_terminal=False, max_tokens=200,
+                       temperature=0)
     return (*parse_facts(raw), raw)
 
 

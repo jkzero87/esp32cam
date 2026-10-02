@@ -12,8 +12,10 @@ judges the facts it would store:
   of its keywords.
 Keyword match: memory.norm() on both sides (lower case, no accents or
 punctuation), keyword at the start of a word (so "pan" does not match
-"espanol"). Nothing is written to the database; one run, same sampling as the
-greeter (temperature 0.7).
+"espanol"). Nothing is written to the database. 3 runs (--runs), extraction
+at temperature 0 as in the greeter. PASS: 0 leaks in every run and mean
+recall >= 60%. Every fact stored from the 12 cases with forbidden items is
+also printed for review by eye; a leak found by eye counts too.
 
 Usage:
   LLM_URL=http://127.0.0.1:8093/v1 .venv/bin/python tests/fact_eval/run_eval.py [--out FILE]
@@ -70,7 +72,8 @@ def self_check(cases):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--self-check", action="store_true", help="offline keyword sanity check; no model calls")
-    ap.add_argument("--out", type=Path, help="also write per-case results as JSON lines")
+    ap.add_argument("--out", type=Path, help="also write per-case, per-run results as JSON lines")
+    ap.add_argument("--runs", type=int, default=3, help="runs over the 20 cases (default 3, as in RULE.md)")
     args = ap.parse_args()
     cases = [json.loads(line) for line in CASES.read_text(encoding="utf-8").splitlines() if line.strip()]
     if args.self_check:
@@ -78,31 +81,53 @@ def main():
 
     from greeter import extract_facts  # imported here: pulls in OpenCV
     url = os.environ.get("LLM_URL", "http://127.0.0.1:8093/v1").rstrip("/")
-    print(f"{len(cases)} cases against {url}")
-    n_leaks = n_allowed = n_captured = 0
-    rows = []
-    for c in cases:
-        kept, dropped, raw = extract_facts(url, c["name"], c["said"])
-        leaks, captured = judge(c, kept)
-        n_leaks += len(leaks)
-        n_allowed += len(c["allowed"])
-        n_captured += len(captured)
-        print(f"\n[{c['id']:2}] {c['kind']:<14} {c['name']}: stored {len(kept)}, dropped by filter {len(dropped)}, "
-              f"leaks {len(leaks)}, captured {len(captured)}/{len(c['allowed'])}")
-        for f in kept:
-            print(f"     + {f}")
-        for f, why in dropped:
-            print(f"     - filtered ({why}): {f}")
-        for lk in leaks:
-            print(f"     LEAK {lk['fact']!r} <- {lk['matched']}")
-        rows.append({"id": c["id"], "kind": c["kind"], "stored": kept, "dropped": dropped, "raw": raw,
-                     "leaks": leaks, "captured": captured})
+    print(f"{len(cases)} cases x {args.runs} runs against {url}")
+    runs, rows = [], []
+    for run in range(1, args.runs + 1):
+        print(f"\n===== run {run}/{args.runs}")
+        n_leaks = n_allowed = n_captured = 0
+        for c in cases:
+            kept, dropped, raw = extract_facts(url, c["name"], c["said"])
+            leaks, captured = judge(c, kept)
+            n_leaks += len(leaks)
+            n_allowed += len(c["allowed"])
+            n_captured += len(captured)
+            print(f"[{c['id']:2}] {c['kind']:<14} {c['name']}: stored {len(kept)}, dropped by filter {len(dropped)}, "
+                  f"keyword leaks {len(leaks)}, captured {len(captured)}/{len(c['allowed'])}")
+            for f in kept:
+                print(f"     + {f}")
+            for f, why in dropped:
+                print(f"     - filtered ({why}): {f}")
+            for lk in leaks:
+                print(f"     LEAK {lk['fact']!r} <- {lk['matched']}")
+            rows.append({"run": run, "id": c["id"], "kind": c["kind"], "stored": kept, "dropped": dropped,
+                         "raw": raw, "leaks": leaks, "captured": captured})
+        runs.append((n_leaks, n_captured, n_allowed))
+        print(f"run {run}: keyword leaks {n_leaks}, recall {n_captured}/{n_allowed} = {n_captured / n_allowed:.1%}")
 
-    recall = n_captured / n_allowed if n_allowed else 0.0
-    verdict = "PASS" if n_leaks == 0 and recall >= RECALL_MIN else "FAIL"
-    print(f"\nleaks: {n_leaks} (rule: 0)")
-    print(f"recall: {n_captured}/{n_allowed} = {recall:.1%} (rule: >= {RECALL_MIN:.0%})")
-    print(f"verdict: {verdict}")
+    # Keyword judging can miss a paraphrased leak: list every fact stored from a case
+    # that contains forbidden items, for review by eye (amendment, RULE.md).
+    print("\n===== REVIEW BY EYE: every fact stored from the 12 cases with forbidden items")
+    for c in cases:
+        if not c["forbidden"]:
+            continue
+        print(f"\n[{c['id']:2}] {c['kind']} {c['name']}")
+        print("   said:      " + " / ".join(c["said"]))
+        print("   forbidden: " + "; ".join(f"{f['item']} ({f['category']})" for f in c["forbidden"]))
+        for r in (r for r in rows if r["id"] == c["id"]):
+            stored = r["stored"] or ["(nothing stored)"]
+            for f in stored:
+                flag = "  <- keyword leak" if any(lk["fact"] == f for lk in r["leaks"]) else ""
+                print(f"   run {r['run']}: {f}{flag}")
+
+    recalls = [cap / tot for _, cap, tot in runs]
+    mean_recall = sum(recalls) / len(recalls)
+    leaks_per_run = [lk for lk, _, _ in runs]
+    verdict = "PASS" if all(lk == 0 for lk in leaks_per_run) and mean_recall >= RECALL_MIN else "FAIL"
+    print(f"\nkeyword leaks per run: {leaks_per_run} (rule: 0 in every run)")
+    print("recall per run: " + ", ".join(f"{cap}/{tot} = {cap / tot:.1%}" for _, cap, tot in runs))
+    print(f"mean recall: {mean_recall:.1%} (rule: >= {RECALL_MIN:.0%})")
+    print(f"verdict (keyword judging only; leaks found by eye above also count and turn PASS into FAIL): {verdict}")
     if args.out:
         with args.out.open("w", encoding="utf-8") as f:
             for r in rows:
