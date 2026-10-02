@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for pc/memory.py: fact parsing and filters, consent/name
-parsing, and add/read/forget against the cam schema in de_postgres (uses a
-throwaway person 'test_unit_mem' and a temporary gallery; both are removed)."""
+parsing, and add/read/consent/forget against the cam schema in de_postgres
+(uses throwaway people 'test_unit_mem*' and a temporary gallery; all removed)."""
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -64,6 +64,15 @@ when = datetime.now(timezone.utc)
 check("add 2 facts", mem.add_facts(name, ["Le gusta el té", "Vive en Bogotá"], when), 2)
 check("add 0 facts", mem.add_facts(name, [], when), 0)
 check("recent facts, newest first (same time -> by id)", mem.recent_facts(name), ["Vive en Bogotá", "Le gusta el té"])
+check("record_consent on a missing person -> None, no row created",
+      (mem.record_consent("test_unit_nobody"), mem.forget("test_unit_nobody")["people"]), (None, 0))
+mem.forget(name + "_c")
+pid_c = mem.person_id(name + "_c")  # enrolled by hand: consent_at NULL
+consent_at = mem.record_consent(name + "_c")
+check("record_consent sets consent_at to a recent time",
+      consent_at is not None and abs((datetime.now(timezone.utc) - consent_at).total_seconds()) < 60, True)
+check("record_consent keeps the same person", mem.person_id(name + "_c"), pid_c)
+mem.forget(name + "_c")
 removed = mem.forget(name)
 check("forget removes row, facts and gallery file", removed, {"people": 1, "facts": 2, "gallery_file": True})
 check("gallery file gone", (tmp / f"{name}.npy").exists(), False)

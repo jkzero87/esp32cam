@@ -434,6 +434,11 @@ Live tests:
 .venv/bin/python pc/greeter.py --preview --metrics --absent-minutes 0 --gallery-dir /tmp/empty_gallery
 ```
 
+After each test, `.venv/bin/python pc/status.py` shows what was stored (read-only):
+every person with created_at, consent_at, fact count and gallery embeddings, and
+each person's facts as text. `Memory.record_consent(name)` sets `consent_at` for
+an existing person (Juan's own consent was recorded with it on 2026-10-02).
+
 The first live attempt (2026-10-01) stored nothing. Ctrl+C ended the
 conversation before fact extraction ran, and the consent answer was not taken
 as a yes (likely a stale empty line). Both are fixed but not yet retested; see

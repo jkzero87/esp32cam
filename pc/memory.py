@@ -150,6 +150,14 @@ class Memory:
             return c.execute("INSERT INTO cam.people (name, consent_at) VALUES (%s, CASE WHEN %s THEN now() END) "
                              "RETURNING id", (name, consent)).fetchone()[0]
 
+    def record_consent(self, name):
+        """Set consent_at = now() for an existing person. Returns the new consent_at,
+        or None if NAME has no row (no row is created: enrolling is a separate step)."""
+        with self._conn() as c:
+            row = c.execute("UPDATE cam.people SET consent_at = now() WHERE name = %s RETURNING consent_at",
+                            (name,)).fetchone()
+        return row[0] if row else None
+
     def recent_facts(self, name, n=GREETING_FACTS):
         with self._conn() as c:
             return [r[0] for r in c.execute(
