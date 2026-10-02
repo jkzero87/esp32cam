@@ -9,6 +9,10 @@ from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from offline import guard  # noqa: E402
+
+guard("tests/test_memory.py")  # no model, no network (Postgres via libpq still works)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pc"))
 from memory import Memory, is_clear_yes, name_slug, parse_facts, wants_forget  # noqa: E402
 

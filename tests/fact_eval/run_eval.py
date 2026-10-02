@@ -20,6 +20,7 @@ also printed for review by eye; a leak found by eye counts too.
 Usage:
   LLM_URL=http://127.0.0.1:8093/v1 .venv/bin/python tests/fact_eval/run_eval.py [--out FILE]
   .venv/bin/python tests/fact_eval/run_eval.py --self-check   # offline: keywords vs. their own texts
+  .venv/bin/python tests/fact_eval/run_eval.py --stub --runs 1  # offline dry run of the report
 """
 import argparse
 import json
@@ -72,15 +73,27 @@ def self_check(cases):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--self-check", action="store_true", help="offline keyword sanity check; no model calls")
+    ap.add_argument("--stub", action="store_true",
+                    help="offline dry run of the report with a fake extractor (stores each case's first line); "
+                         "network blocked, refuses unless LLM_URL is unset or 'stub'")
     ap.add_argument("--out", type=Path, help="also write per-case, per-run results as JSON lines")
     ap.add_argument("--runs", type=int, default=3, help="runs over the 20 cases (default 3, as in RULE.md)")
     args = ap.parse_args()
     cases = [json.loads(line) for line in CASES.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if args.self_check or args.stub:
+        sys.path.insert(0, str(HERE.parent))
+        from offline import guard
+        guard("run_eval.py --self-check/--stub")
     if args.self_check:
         sys.exit(1 if self_check(cases) else 0)
 
-    from greeter import extract_facts  # imported here: pulls in OpenCV
-    url = os.environ.get("LLM_URL", "http://127.0.0.1:8093/v1").rstrip("/")
+    if args.stub:
+        def extract_facts(url, name, said):
+            return [said[0]], [], "stub"
+        url = "stub"
+    else:
+        from greeter import extract_facts  # imported here: pulls in OpenCV
+        url = os.environ.get("LLM_URL", "http://127.0.0.1:8093/v1").rstrip("/")
     print(f"{len(cases)} cases x {args.runs} runs against {url}")
     runs, rows = [], []
     for run in range(1, args.runs + 1):
