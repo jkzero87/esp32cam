@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Greet recognized people in the terminal through a local LLM (Spanish), with memory.
 
-Reads the ESP32-CAM MJPEG stream (CAM_IP, default 192.168.20.71) and runs the
+Reads the ESP32-CAM MJPEG stream (CAM_IP, from the environment or .env) and runs the
 same recognition as capture_detect.py --recognize: YuNet + SFace, cosine
 >= 0.45, a person confirmed after 2 of the last 3 frames, an unknown face
 after 3 of 3. The model is reached at LLM_URL (OpenAI-compatible, default
@@ -47,7 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from capture_detect import (GALLERY, GREEN, MODEL, RECOGNIZE_AT, ROOT, SFACE, WINDOW, YELLOW,  # noqa: E402
-                            Confirmer, identify, show, stream_frames)
+                            Confirmer, cam_ip, identify, show, stream_frames)
 from memory import (Memory, extraction_messages, ground_facts, is_clear_yes, name_slug,  # noqa: E402
                     parse_facts, third_person, wants_forget)
 
@@ -338,7 +338,7 @@ def main():
     args = ap.parse_args()
 
     url = os.environ.get("LLM_URL", "http://127.0.0.1:8093/v1").rstrip("/")
-    cam = f"http://{os.environ.get('CAM_IP', '192.168.20.71')}:81/stream"
+    cam = f"http://{cam_ip()}:81/stream"
     now = datetime.now()
     stop_at = datetime.strptime(args.until, "%H:%M").replace(year=now.year, month=now.month, day=now.day)
     st = State(args.gallery_dir)

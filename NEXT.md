@@ -3,7 +3,7 @@
 Everything must stop by 18:55 (PC off ~19:00): `tools/stop_at.sh HH:MM PID PATTERN`.
 
 ## State at the end of 2026-10-02
-- Camera OK (192.168.20.71, 240x240). `cam.people`: juan (consent recorded
+- Camera OK (IP in .env as CAM_IP, 240x240). `cam.people`: juan (consent recorded
   2026-10-02 15:38), 1 fact ("Esperando el partido de la selección").
   `data/gallery/juan.npy` (20 embeddings). `pc/status.py` shows all of it.
 - Fact eval on the 4B: run 2 (`tests/fact_eval/run_20261002_1749.log`) final

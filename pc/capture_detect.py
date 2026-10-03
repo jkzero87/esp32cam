@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run YuNet face detection on the PC (CPU) on frames from the ESP32-CAM.
 
-Two frame sources (CAM_IP from the environment, default 192.168.20.71):
+Two frame sources (camera address from cam_ip(): CAM_IP in the environment or .env):
   --source capture (default): every --interval seconds (default 1; 0 = as fast
       as possible) fetch one JPEG from http://<CAM_IP>/capture.
   --source stream: read the MJPEG stream at http://<CAM_IP>:81/stream and
@@ -56,6 +56,20 @@ MODEL = ROOT / "models" / "face_detection_yunet_2026may.onnx"
 FRAMES = ROOT / "data" / "frames"
 SFACE = ROOT / "models" / "face_recognition_sface_2021dec.onnx"
 GALLERY = ROOT / "data" / "gallery"
+
+
+def cam_ip():
+    """The camera's LAN address: CAM_IP from the environment, else CAM_IP in
+    .env (gitignored, the one place it is configured). Exits if neither is set."""
+    ip = os.environ.get("CAM_IP")
+    env = ROOT / ".env"
+    if not ip and env.exists():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("CAM_IP="):
+                ip = line.split("=", 1)[1].strip()
+    if not ip:
+        sys.exit("CAM_IP is not set: add CAM_IP=<camera IP> to .env or export it")
+    return ip
 # Same identity if cosine similarity >= 0.363 (or norm-L2 distance <= 1.128):
 # OpenCV tutorial "DNN-based Face Detection And Recognition" (tutorial_dnn_face),
 # samples/dnn/face_detect.py, and opencv_zoo models/face_recognition_sface/sface.py.
@@ -226,7 +240,7 @@ def main():
                          f"cosine < {ADD_DIVERSITY} to kept) to the gallery, up to {GALLERY_CAP}")
     args = ap.parse_args()
 
-    ip = os.environ.get("CAM_IP", "192.168.20.71")
+    ip = cam_ip()
     if args.source == "capture":
         url = f"http://{ip}/capture"
         frames_iter = capture_frames(url, args.interval, timeout=max(args.interval * 3, 3))

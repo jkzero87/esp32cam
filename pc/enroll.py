@@ -2,7 +2,7 @@
 """Enroll one person for SFace recognition from the ESP32-CAM stream (CPU).
 
 For --seconds (default 30) reads http://<CAM_IP>:81/stream (CAM_IP from the
-environment, default 192.168.20.71), detects faces with YuNet, and for every
+environment or .env, see capture_detect.cam_ip), detects faces with YuNet, and for every
 frame with exactly one face aligns and embeds it with SFace. The gallery
 keeps a diverse set: an embedding is added only if its cosine similarity to
 every embedding already kept for this person is below --diversity (default
@@ -13,14 +13,13 @@ data/gallery/NAME.npy (gitignored). No images are written. Frames with
 several faces are skipped so nobody else gets enrolled by accident.
 """
 import argparse
-import os
 import re
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from capture_detect import GREEN, MODEL, ROOT, WINDOW, YELLOW, show, stream_frames  # noqa: E402
+from capture_detect import GREEN, MODEL, ROOT, WINDOW, YELLOW, cam_ip, show, stream_frames  # noqa: E402
 
 import cv2  # noqa: E402  (after capture_detect sets QT_QPA_PLATFORM)
 import numpy as np  # noqa: E402
@@ -56,7 +55,7 @@ def main():
     det = cv2.FaceDetectorYN.create(str(MODEL), "", (320, 320), args.score, 0.3, 50,
                                     cv2.dnn.DNN_BACKEND_DEFAULT, cv2.dnn.DNN_TARGET_CPU)
     rec = cv2.FaceRecognizerSF.create(str(SFACE), "", cv2.dnn.DNN_BACKEND_DEFAULT, cv2.dnn.DNN_TARGET_CPU)
-    url = f"http://{os.environ.get('CAM_IP', '192.168.20.71')}:81/stream"
+    url = f"http://{cam_ip()}:81/stream"
     print(f"enrolling '{args.name}' from {url} for {args.seconds:g} s; keep if cosine to all kept "
           f"< {args.diversity}, up to {args.max}", flush=True)
     if args.preview:

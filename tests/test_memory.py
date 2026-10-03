@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Offline tests for pc/memory.py: fact parsing and filters, consent/name
-parsing, and add/read/consent/forget against the cam schema in de_postgres
+parsing, and add/read/consent/forget against the cam schema in the local Postgres
 (uses throwaway people 'test_unit_mem*' and a temporary gallery; all removed)."""
 import sys
 import tempfile
