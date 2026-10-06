@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -63,11 +64,12 @@ for i, fact in enumerate(plan, 1):
     if fact:
         system += hint_tpl.format(name=a.name, facts=f"- {fact}")
     messages = [{"role": "system", "content": system}, {"role": "user", "content": f"({a.name} acaba de llegar.)"}]
-    text, _, _, _ = greeter.llm(url, messages, stream_to_terminal=False, temperature=a.temperature)
+    text, first, _, _ = greeter.llm(url, messages, stream_to_terminal=False, temperature=a.temperature)
     allowed = set(norm(fact or "").split())
     scene = sorted({m.group(0) for m in SCENE.finditer(norm(text))} - allowed)
     used = fact_words_used(text, [fact]) if fact else []
-    rows.append(dict(i=i, fact=fact, text=text.strip(), scene_words=scene, fact_words_used=used))
+    rows.append(dict(i=i, fact=fact, text=text.strip(), scene_words=scene, fact_words_used=used,
+                     first_word_s=round(first, 3) if first is not None else None))
     print(f"{i:2d} {'SCENE ' + str(scene) if scene else 'ok   '} {'| fact ' + str(used) if fact else ''} | {text.strip()}")
 nf = [r for r in rows if not r["fact"]]
 wf = [r for r in rows if r["fact"]]
@@ -75,5 +77,9 @@ print(f"\nprompt from: {a.prompt_from or 'current'}; temperature {a.temperature:
 print(f"flagged invented-scene greetings: {sum(bool(r['scene_words']) for r in rows)}/{len(rows)} "
       f"(no facts {sum(bool(r['scene_words']) for r in nf)}/{len(nf)}, with fact {sum(bool(r['scene_words']) for r in wf)}/{len(wf)})")
 print(f"with-fact greetings that use the fact: {sum(bool(r['fact_words_used']) for r in wf)}/{len(wf)}")
+firsts = sorted(r["first_word_s"] for r in rows if r["first_word_s"] is not None)
+if firsts:
+    print(f"first word (s, from the request; streamed): median {statistics.median(firsts):.3f}, "
+          f"min {firsts[0]:.3f}, max {firsts[-1]:.3f}, n {len(firsts)}")
 if a.out:
     a.out.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n")
