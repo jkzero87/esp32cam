@@ -161,6 +161,11 @@ def ungrounded(fact, user_lines):
     return missing
 
 
+def fact_words_used(text, facts):
+    """Content words of FACTS (as ungrounded() picks them) that TEXT contains."""
+    return sorted({w for f in facts for w in ungrounded(f, []) if w not in ungrounded(f, [text])})
+
+
 def ground_facts(kept, user_lines):
     """Grounding check after parse_facts: (grounded facts, dropped [(fact, reason)])."""
     ok, dropped = [], []

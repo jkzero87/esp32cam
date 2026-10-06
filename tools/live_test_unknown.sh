@@ -13,6 +13,6 @@ cd "$(dirname "$0")/.." || exit 1
 GALLERY=data/gallery_live_test
 mkdir -p "$GALLERY"
 
-.venv/bin/python pc/greeter.py --preview --metrics --absent-minutes 0 --gallery-dir "$GALLERY"
+.venv/bin/python pc/greeter.py --preview --metrics --log-greeting --absent-minutes 0 --gallery-dir "$GALLERY"
 echo
 .venv/bin/python pc/status.py --gallery-dir "$GALLERY"

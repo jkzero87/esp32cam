@@ -4,6 +4,7 @@ already in cam.people (any case, extra spaces) is refused and never reused, even
 an empty throwaway --gallery-dir (the 2026-10-06 live test re-stamped a real row's
 consent_at that way). Uses throwaway people 'test_unit_guard*' in the local Postgres
 and temporary galleries; all removed. No model, no network (tests/offline.py)."""
+import json
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -191,6 +192,40 @@ try:
     check("no row re-created for the forgotten name", fmem.existing_id(gone), None)
     check("add_facts for a name with no row stores nothing and creates nothing",
           (fmem.add_facts(gone, ["Le gusta el té"], datetime.now(timezone.utc)), fmem.existing_id(gone)), (0, None))
+
+    print("== an existing person tells a fact: stored, and the next greeting is logged with it")
+    who = "test_unit_guard_fact"
+    np.save(gdir / f"{who}.npy", np.vstack([feature(21)]))
+    check("enroll the person", fmem.enroll(who) is not None, True)
+    st = greeter.State(gdir)
+    fact = "Le gusta el ciclismo de montaña"
+    typed = "Me gusta mucho el ciclismo de montaña"
+
+    def fake_llm(url, messages, stream_to_terminal=True, **kw):
+        if not stream_to_terminal:               # the fact extraction call
+            return '{"facts": ["%s"]}' % fact, 0.1, 10, 10.0
+        if "Cosas que recuerdas" in messages[0]["content"]:
+            return "¡Hola! ¿Qué tal el ciclismo de montaña?", 0.1, 8, 10.0
+        return "¡Hola!", 0.1, 2, 10.0
+
+    greeter.llm = fake_llm
+    greeter.METRICS = metrics_file
+    largs = SimpleNamespace(metrics=True, log_greeting=True)
+    script = iter([typed, ""])
+    greeter.read_line = lambda prompt, timeout, fresh=False: next(script, None)
+    greeter.person_conversation(st, fmem, largs, "http://unused", who, 0.0)
+    events = [json.loads(line) for line in metrics_file.read_text().splitlines()]
+    saved = [e for e in events if e["event"] == "facts" and e["name"] == who]
+    check("facts event: 1 stored", [(e["stored"], e["dropped"]) for e in saved], [(1, 0)])
+    check("the fact is in cam.facts", fmem.recent_facts(who), [fact])
+    script = iter([""])
+    greeter.person_conversation(st, fmem, largs, "http://unused", who, 0.0)
+    events = [json.loads(line) for line in metrics_file.read_text().splitlines()]
+    greet = [e for e in events if e["event"] == "greeting" and e["name"] == who]
+    check("2nd greeting had the fact in its prompt", greet[-1]["facts_in_prompt"], 1)
+    check("2nd greeting logged with its text", greet[-1].get("text"), "¡Hola! ¿Qué tal el ciclismo de montaña?")
+    check("2nd greeting logged with the fact words it used", greet[-1].get("fact_words_used"), ["ciclismo", "montaña"])
+    check("what the person typed is never in the metrics", typed in metrics_file.read_text(), False)
 finally:
     with mem._conn() as c:
         c.execute("DELETE FROM cam.people WHERE name LIKE 'test_unit_guard%'")

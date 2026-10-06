@@ -48,7 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from capture_detect import (GALLERY, GREEN, MODEL, RECOGNIZE_AT, ROOT, SFACE, WINDOW, YELLOW,  # noqa: E402
                             Confirmer, cam_ip, identify, show, stream_frames)
-from memory import (Memory, extraction_messages, ground_facts, is_clear_yes, name_slug,  # noqa: E402
+from memory import (Memory, extraction_messages, fact_words_used, ground_facts, is_clear_yes, name_slug,  # noqa: E402
                     parse_facts, third_person, wants_forget)
 
 import cv2  # noqa: E402
@@ -67,8 +67,8 @@ SYSTEM = ("Eres un asistente amable: una cámara sobre un escritorio, con una vo
           "(tampoco tienes internet ni noticias). No inventes lo que ves: solo sabes quién ha llegado. "
           "Hablas en español, de forma cercana, informal y breve: una o dos frases como máximo. "
           "Acabas de ver llegar a {name}. Salúdale por su nombre.")
-FACTS_HINT = ("\nCosas que recuerdas de {name} de conversaciones anteriores (puedes mencionar una, "
-              "con naturalidad, si encaja; no las enumeres):\n{facts}")
+FACTS_HINT = ("\nCosas que recuerdas de {name} de conversaciones anteriores:\n{facts}\n"
+              "En el saludo, menciona con naturalidad una de ellas (solo una; no las enumeres ni inventes detalles).")
 
 
 def metric(enabled, **rec):
@@ -224,8 +224,11 @@ def person_conversation(st, mem, args, url, name, t_confirm):
     first_total = (t_call - t_confirm) + (first or 0)  # confirmation -> first word, incl. the DB lookup
     print(f"   [primera palabra {first_total:.2f} s tras la confirmación; {n_tok} tokens a {tps:.1f} tok/s]",
           flush=True)
+    extra = {}
+    if getattr(args, "log_greeting", False):  # live tests only: the assistant's words, never the person's
+        extra = dict(text=text.strip(), fact_words_used=fact_words_used(text, facts))
     metric(args.metrics, event="greeting", name=name, facts_in_prompt=len(facts),
-           latency_first_word_s=round(first_total or -1, 3), tokens=n_tok, tokens_per_s=round(tps, 2))
+           latency_first_word_s=round(first_total or -1, 3), tokens=n_tok, tokens_per_s=round(tps, 2), **extra)
     messages.append({"role": "assistant", "content": text})
 
     said, end = [], "empty_line"
@@ -377,6 +380,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--absent-minutes", type=float, default=30,
                     help="greet a person again only after this long unseen (default 30)")
+    ap.add_argument("--log-greeting", action="store_true",
+                    help="live tests: also log each greeting's text and the stored-fact words it uses (with --metrics)")
     ap.add_argument("--gallery-dir", type=Path, default=GALLERY, help="gallery directory (default data/gallery)")
     ap.add_argument("--until", default="18:50", help="stop at this clock time today (default 18:50)")
     ap.add_argument("--preview", action="store_true", help="show the stream with names in a window, 2x")
