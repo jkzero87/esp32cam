@@ -276,13 +276,20 @@ def unknown_exchange(st, mem, args):
             metric(args.metrics, event="unknown_declined", answered=answer is not None,
                    answer_empty=answer is not None and not answer.strip())
             return False
-        raw_name = read_line("asistente> ¡Genial! ¿Cómo te llamas?\ntú> ", 60, fresh=True)
-        name = name_slug(raw_name or "")
-        if not name:
-            print("asistente> No entendí el nombre; no guardo nada.", flush=True)
-            return False
-        if (st.gallery_dir / f"{name}.npy").exists():
-            print(f"asistente> Ya conozco a alguien llamado {name}; no guardo nada.", flush=True)
+        # A name already in cam.people (or in this gallery) is refused, never reused: the DB is
+        # shared even when --gallery-dir is a throwaway one (2026-10-06 live test).
+        question = "asistente> ¡Genial! ¿Cómo te llamas?\ntú> "
+        for _ in range(3):
+            raw_name = read_line(question, 60, fresh=True)
+            name = name_slug(raw_name or "")
+            if not name:
+                print("asistente> No entendí el nombre; no guardo nada.", flush=True)
+                return False
+            if not ((st.gallery_dir / f"{name}.npy").exists() or mem.name_taken(name)):
+                break
+            question = f"asistente> Ya conozco a alguien llamado {name}. Dime otro nombre, por favor.\ntú> "
+        else:
+            print("asistente> Ese nombre ya existe; no guardo nada.", flush=True)
             return False
         with st.lock:
             feats = list(st.collector)
@@ -290,16 +297,19 @@ def unknown_exchange(st, mem, args):
         if not kept:
             print("asistente> No te vi bien la cara; no guardo nada.", flush=True)
             return False
+        pid = mem.enroll(name)
+        if pid is None:
+            print(f"asistente> Ya conozco a alguien llamado {name}; no guardo nada.", flush=True)
+            return False
         st.gallery_dir.mkdir(parents=True, exist_ok=True)
         np.save(st.gallery_dir / f"{name}.npy", np.vstack(kept).astype(np.float32))
-        pid = mem.person_id(name, consent=True)
         with st.lock:
             st.gallery = load_gallery(st.gallery_dir)
             st.last_seen[name] = time.monotonic()
         print(f"asistente> Encantado, {name.capitalize()}. La próxima vez te reconoceré.\n"
               f"   [guardado: cam.people id={pid} con consent_at; {len(kept)} embeddings de {len(feats)} "
               f"caras vistas en {time.monotonic() - t0:.0f} s -> {st.gallery_dir / (name + '.npy')}]", flush=True)
-        metric(args.metrics, event="enrolled", embeddings=len(kept), faces_seen=len(feats))
+        metric(args.metrics, event="enrolled", name=name, embeddings=len(kept), faces_seen=len(feats))
         return True
     finally:
         with st.lock:

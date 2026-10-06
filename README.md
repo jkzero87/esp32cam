@@ -157,7 +157,7 @@ llama-server -m Qwen3.5-4B-MTP-UD-Q4_K_XL.gguf -ngl 0 --device none -c 4096 -t 4
 .venv/bin/python pc/status.py      # what it remembers (read-only)
 ```
 
-Tests: `.venv/bin/python tests/test_memory.py`, `tests/test_ctrlc.py` (offline
+Tests: `.venv/bin/python tests/test_memory.py`, `tests/test_ctrlc.py`, `tests/test_enroll_guard.py` (offline
 by design; they refuse to run if `LLM_URL` points at a model), and
 `tests/fact_eval/run_eval.py` against a running model.
 

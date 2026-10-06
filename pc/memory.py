@@ -243,6 +243,21 @@ class Memory:
             return c.execute("INSERT INTO cam.people (name, consent_at) VALUES (%s, CASE WHEN %s THEN now() END) "
                              "RETURNING id", (name, consent)).fetchone()[0]
 
+    def name_taken(self, name):
+        """True if cam.people already has NAME (case-insensitive, trimmed)."""
+        with self._conn() as c:
+            return c.execute("SELECT 1 FROM cam.people WHERE lower(trim(name)) = lower(trim(%s))",
+                             (name,)).fetchone() is not None
+
+    def enroll(self, name):
+        """Create a new row for NAME with consent_at = now() and return its id. Never touches an
+        existing row: returns None if the name is taken (case-insensitive, trimmed)."""
+        with self._conn() as c:
+            row = c.execute("INSERT INTO cam.people (name, consent_at) SELECT %s, now() WHERE NOT EXISTS "
+                            "(SELECT 1 FROM cam.people WHERE lower(trim(name)) = lower(trim(%s))) "
+                            "ON CONFLICT (name) DO NOTHING RETURNING id", (name, name)).fetchone()
+        return row[0] if row else None
+
     def record_consent(self, name):
         """Set consent_at = now() for an existing person. Returns the new consent_at,
         or None if NAME has no row (no row is created: enrolling is a separate step)."""
