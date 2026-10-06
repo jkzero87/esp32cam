@@ -107,6 +107,37 @@ try:
     last = metrics_file.read_text().splitlines()[-1]
     check("metrics 'enrolled' event carries the name", ('"event": "enrolled"' in last, f'"name": "{new}"' in last),
           (True, True))
+
+    print("== camera frames around an enrollment (2026-10-06: a 2nd 'no te conozco' right after enrolling)")
+    st = greeter.State(tmp / "gallery_frames")
+    confirmer = greeter.Confirmer()
+    face = feature(7)
+    unknown_ids = [("unknown", 0.0, face)]
+    evs = []
+    st.unknown_busy = True                       # an unknown exchange is in progress
+    old_gallery = st.gallery
+    for k in range(3):                           # the face is unknown while the exchange runs
+        evs += greeter.frame_events(st, confirmer, old_gallery, unknown_ids, 100.0 + k, 5)[1]
+    check("no event while the exchange is busy", evs, [])
+    # The exchange enrolls the face: gallery reloaded, last_seen set, then the worker frees unknown_busy.
+    (tmp / "gallery_frames").mkdir()
+    np.save(tmp / "gallery_frames" / "nuevo.npy", np.vstack([face]))
+    st.gallery = greeter.load_gallery(tmp / "gallery_frames")
+    st.last_seen["nuevo"] = 103.0
+    st.unknown_busy = False
+    # A frame identified with the old gallery lands after the reload ...
+    evs += greeter.frame_events(st, confirmer, old_gallery, unknown_ids, 103.1, 5)[1]
+    # ... then frames identified with the new one.
+    ident = greeter.identify(None, st.gallery, None, None, greeter.RECOGNIZE_AT, feat=face)
+    check("the enrolled embedding is recognized as the new name", ident[0], "nuevo")
+    confirmed = set()
+    for k in range(3):
+        c, e = greeter.frame_events(st, confirmer, st.gallery, [ident], 103.2 + k * 0.1, 5)
+        confirmed |= c
+        evs += e
+    check("no second unknown exchange after the enrollment", [e[0] for e in evs if e[0] == "unknown"], [])
+    check("the new name is confirmed", "nuevo" in confirmed, True)
+    check("not re-greeted right after enrolling", [e for e in evs if e[0] == "person"], [])
 finally:
     with mem._conn() as c:
         c.execute("DELETE FROM cam.people WHERE name LIKE 'test_unit_guard%'")

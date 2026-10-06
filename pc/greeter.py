@@ -284,6 +284,7 @@ def unknown_exchange(st, mem, args):
             name = name_slug(raw_name or "")
             if not name:
                 print("asistente> No entendí el nombre; no guardo nada.", flush=True)
+                metric(args.metrics, event="unknown_no_name", answered=raw_name is not None)
                 return False
             if not ((st.gallery_dir / f"{name}.npy").exists() or mem.name_taken(name)):
                 break
@@ -314,6 +315,34 @@ def unknown_exchange(st, mem, args):
     finally:
         with st.lock:
             st.collector = None
+
+
+def frame_events(st, confirmer, gallery, ids, mono, greet_after_s):
+    """Confirm one camera frame's faces; return (confirmed names, events to queue).
+
+    GALLERY is the gallery IDS were computed with. Frames identified before an enrollment
+    reloaded st.gallery are dropped (the history is restarted): they say "unknown" for the
+    person just enrolled and would start a second unknown exchange (2026-10-06 live test)."""
+    with st.lock:
+        if gallery is not st.gallery:
+            return set(), []
+    if getattr(confirmer, "gallery", gallery) is not gallery:
+        confirmer.history.clear()
+    confirmer.gallery = gallery
+    confirmed, unknown_confirmed = confirmer.update(
+        {n for n, _, _ in ids if n != "unknown"}, any(n == "unknown" for n, _, _ in ids))
+    out = []
+    with st.lock:
+        for name in confirmed:
+            gap = mono - st.last_seen[name] if name in st.last_seen else None
+            if gap is None or gap >= greet_after_s:
+                out.append(("person", name, time.perf_counter()))
+            st.last_seen[name] = mono
+        if (unknown_confirmed and not confirmed and not st.unknown_busy
+                and mono >= st.unknown_cooldown_until):
+            st.unknown_busy = True
+            out.append(("unknown", None, time.perf_counter()))
+    return confirmed, out
 
 
 def conversation_worker(events, st, mem, args, url):
@@ -382,23 +411,15 @@ def main():
                 gallery = st.gallery
             ids = [identify(rec, gallery, img, f, RECOGNIZE_AT) for f in faces] if gallery else \
                 [("unknown", 0.0, None) for _ in faces]
-            confirmed, unknown_confirmed = confirmer.update(
-                {n for n, _, _ in ids if n != "unknown"}, any(n == "unknown" for n, _, _ in ids))
-            mono = time.monotonic()
             with st.lock:
                 if st.collector is not None and len(faces) == 1 and ids[0][0] == "unknown":
                     feat = ids[0][2] if ids[0][2] is not None else \
                         rec.feature(rec.alignCrop(img, faces[0])).ravel().astype(np.float32)
                     st.collector.append(feat)
-                for name in confirmed:
-                    gap = mono - st.last_seen[name] if name in st.last_seen else None
-                    if gap is None or gap >= max(args.absent_minutes * 60, LEFT_AFTER_S):
-                        events.put(("person", name, time.perf_counter()))
-                    st.last_seen[name] = mono
-                if (unknown_confirmed and not confirmed and not st.unknown_busy
-                        and mono >= st.unknown_cooldown_until):
-                    st.unknown_busy = True
-                    events.put(("unknown", None, time.perf_counter()))
+            confirmed, new_events = frame_events(st, confirmer, gallery, ids, time.monotonic(),
+                                                 max(args.absent_minutes * 60, LEFT_AFTER_S))
+            for ev in new_events:
+                events.put(ev)
             if args.preview:
                 labels = [(f"{n}{'*' if n in confirmed else ''} {s:.2f}", n != "unknown") for n, s, _ in ids]
                 show(img, faces, "confirmed: " + (", ".join(sorted(confirmed)) or "-"),
