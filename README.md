@@ -17,7 +17,8 @@ next.
 - [x] **Phase 2: recognition.** SFace embeddings, threshold chosen from an impostor test.
 - [x] **Phase 3: greeting.** Local Qwen3.5-4B greets confirmed people by name, in Spanish.
 - [x] **Phase 4: memory.** Facts extracted after each chat and used in later greetings; consent, "olvídame" (forget me). Live test of the unknown-person flow + forget passed on 2026-10-06 (evidence in NOTES.md).
-- [ ] **Next:** the 27B model as the conversation model (if it passes the same fact-extraction eval).
+- [x] **27B as the conversation model** (2026-10-06): Qwen3.8-27B on the GPU passed the pre-registered rule
+  (`tests/27b_rule.md`: fact eval, scene check, first word); the 4B on the CPU stays as the fallback.
 - [ ] **Next:** voice (speech in and out instead of typing).
 
 ## How it works
@@ -28,7 +29,7 @@ flowchart LR
     subgraph PC["My PC (all local)"]
         DET["YuNet<br/>face detection"] --> REC["SFace<br/>recognition<br/>(gallery of embeddings)"]
         REC -- "confirmed: name or unknown" --> GRE["greeter.py<br/>conversation + consent"]
-        GRE <--> LLM["local LLM<br/>(llama.cpp, Qwen3.5-4B on CPU)"]
+        GRE <--> LLM["local LLM<br/>(llama.cpp, Qwen3.8-27B on GPU;<br/>Qwen3.5-4B on CPU as fallback)"]
         GRE -- "facts after each chat<br/>(filtered + grounded)" --> DB[("Postgres<br/>cam.people, cam.facts")]
         DB -- "last 5 facts in the greeting" --> GRE
     end
@@ -74,13 +75,22 @@ passwords/IDs, other people), plus uncommon product and place names. The
 pass rule was written and pushed before each run, and every stored fact was
 also checked by eye.
 
-| | result (3 runs) | rule |
-|---|---:|---|
-| leaks (forbidden item stored) | **0** | 0 in every run |
-| hallucinated facts (names not said) | **0** | 0 in every run |
-| recall of allowed facts | **77.8%** (28/36) | ≥ 60% |
+| | 4B (3 runs, 2026-10-02) | 27B (3 runs, 2026-10-06) | rule |
+|---|---:|---:|---|
+| leaks (forbidden item stored) | **0** | **0** | 0 in every run |
+| hallucinated facts (names not said) | **0** | **0** | 0 in every run |
+| recall of allowed facts | **77.8%** (28/36) | **100%** (36/36) | ≥ 60% |
 
-**Speed** (Qwen3.5-4B, Q4, CPU only, 4 threads):
+The 4B run predates the third-person rewrite of facts (`e385b6f`); the 27B ran with the current extractor.
+
+**Greeting scene check** (`tools/check_greeting_scene.py`): the model never sees the image, so a greeting
+that names a place, object, clothing, appearance or activity invents it. 30 greetings at temperature 0.7
+(20 without facts, 10 with one fact), counted by eye, current prompt: **4B 3/30 invented, 27B 0/30**;
+remembered fact used in 10/10 (4B) and 9/10 (27B). Rule for adopting the 27B: 0/30 and ≥ 9/10.
+
+**Speed, 4B** (Qwen3.5-4B, Q4, CPU only, 4 threads). The 27B (GPU, thinking off) greeted with a median
+first word of **0.19 s** from the request over the 30 scene-check greetings (server warm, prompt cache as
+in real use; rule ≤ 3 s); its reply and generation speed in the greeter were not measured.
 
 | | |
 |---|---:|
@@ -131,8 +141,8 @@ Full test logs and every number's source: [NOTES.md](NOTES.md).
 - ESP32-CAM AI-Thinker with a GC2145 camera (module labelled RHYX M21-45)
 - ESP32-CAM-MB USB programmer board
 - 2.4 GHz WiFi network
-- A Linux PC. The 4B model runs on the CPU; a GPU is only needed for the
-  larger model on the roadmap.
+- A Linux PC. The default conversation model, the 27B, needs a 16 GB GPU (here an RTX 5060 Ti); the
+  4B fallback runs on the CPU.
 
 ## How to run
 
@@ -158,9 +168,12 @@ psql -f sql/001_schema.sql   # as a role that can create the cam schema
 
 # 3. Enroll yourself, start the local LLM, run the greeter
 .venv/bin/python pc/enroll.py --name <you> --seconds 30 --preview
+#    default model: the 27B on :8092 (started with the same server as local-llm-lab's manifiestate)
+.venv/bin/python pc/greeter.py --preview --metrics
+#    fallback: the 4B on the CPU
 llama-server -m Qwen3.5-4B-MTP-UD-Q4_K_XL.gguf -ngl 0 --device none -c 4096 -t 4 \
   --host 127.0.0.1 --port 8093 --reasoning-budget 0 &
-.venv/bin/python pc/greeter.py --preview --metrics
+.venv/bin/python pc/greeter.py --preview --metrics --llm-url http://127.0.0.1:8093/v1
 .venv/bin/python pc/status.py      # what it remembers (read-only)
 ```
 

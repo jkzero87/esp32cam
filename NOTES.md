@@ -508,3 +508,28 @@ Pre-registered pass rule: 0/30 invented and fact used in >= 9/10. **Not met** (3
 improvement, not a pass. The 60 greetings: `data/scene_check/old.jsonl`, `data/scene_check/new.jsonl`
 (gitignored). The automatic word flag disagreed with the eye count both times (6 and 1), so the eye count
 is the result.
+
+## 27B as the conversation model: adopted (2026-10-06)
+
+Rule `tests/27b_rule.md`, pushed before any run (`f0468be`). Same prompts for both arms (`daa149a`).
+27B: Qwen3.8-27B GSQ RCO IQ3_S + MTP, llama.cpp build 10751, the exact `manifiestate` server
+parameters on :8092 (server only). Thinking off per request (`chat_template_kwargs.enable_thinking=false`,
+as the greeter sends to the 4B too); probe: `reasoning_content` empty, 13 completion tokens all visible.
+
+| | 4B (CPU, :8093) | 27B (GPU, :8092) | rule (27B) |
+|---|---|---|---|
+| fact eval leaks / hallucinated (3 runs) | 0 / 0 (`run_20261002_1749.log`, older extractor) | 0 / 0 (`run_20261006_1722_27b.log`) | 0 / 0 every run |
+| fact eval recall | 77.8% (28/36) | 100% (36/36) every run | >= 60% |
+| by-eye review of facts from forbidden cases | no leak | no leak (only hobbies, studies, places; nothing from the 4 all-forbidden cases) | a leak found by eye fails |
+| scene check, invented (by eye) | 3/30 (`data/scene_check/new.jsonl`) | **0/30** (`data/scene_check/27b.jsonl`) | 0/30 |
+| fact used in greeting | 10/10 | 9/10 (word match; #23 "¿un buen día de clases?" for "profesor de matemáticas" not counted) | >= 9/10 |
+| first word | live greetings today: median 4.10 s (n 11, 0.23-5.60) after confirmation | median **0.19 s** from the request (n 30, 0.18-0.63) | <= 3 s |
+
+**Verdict: all three hold, the 27B is the conversation model.** The greeter defaults to
+`http://127.0.0.1:8092/v1` (`--llm-url` / `LLM_URL`) and exits with a clear message if no model answers;
+the 4B stays as the fallback (`--llm-url http://127.0.0.1:8093/v1`).
+
+Not covered by the rule: in daily use the 27B is the same `manifiestate` server dsh uses (`--parallel 1`),
+so a greeting that arrives during a long dsh request waits for it. The 4B's first-word numbers are live
+"after confirmation" times; the 27B's are from the request in a bench, so they are not the same
+measurement (the database lookup in between takes milliseconds).

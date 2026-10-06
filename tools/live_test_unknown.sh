@@ -13,7 +13,8 @@
 # Quit the greeter with Ctrl+C; pc/status.py then shows what is left in the DB and in that
 # gallery (after "olvídame" the test person should be gone from both). --log-greeting puts
 # each greeting's text and the fact words it used in data/greeter_metrics.jsonl.
-# Needs the camera (CAM_IP in .env) and the 4B model on 127.0.0.1:8093.
+# Needs the camera (CAM_IP in .env) and the model: the 27B on 127.0.0.1:8092 (manifiestate), or the
+# 4B with LLM_URL=http://127.0.0.1:8093/v1.
 set -u
 cd "$(dirname "$0")/.." || exit 1
 GALLERY=data/gallery_live_test

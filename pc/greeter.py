@@ -4,8 +4,9 @@
 Reads the ESP32-CAM MJPEG stream (CAM_IP, from the environment or .env) and runs the
 same recognition as capture_detect.py --recognize: YuNet + SFace, cosine
 >= 0.45, a person confirmed after 2 of the last 3 frames, an unknown face
-after 3 of 3. The model is reached at LLM_URL (OpenAI-compatible, default
-http://127.0.0.1:8093/v1).
+after 3 of 3. The model is reached at --llm-url (or LLM_URL; OpenAI-compatible). Default:
+the 27B on http://127.0.0.1:8092/v1 (started by ~/bin/manifiestate; adopted 2026-10-06 by
+tests/27b_rule.md). The 4B on the CPU is the fallback: --llm-url http://127.0.0.1:8093/v1.
 
 - Known person, not seen for --absent-minutes (default 30; never seen in this
   run counts as absent; leaving counts only after 5 s unconfirmed, so with
@@ -431,12 +432,20 @@ def main():
                     help="live tests: also log each greeting's text and the stored-fact words it uses (with --metrics)")
     ap.add_argument("--gallery-dir", type=Path, default=GALLERY, help="gallery directory (default data/gallery)")
     ap.add_argument("--until", default="18:50", help="stop at this clock time today (default 18:50)")
+    ap.add_argument("--llm-url", default=os.environ.get("LLM_URL", "http://127.0.0.1:8092/v1"),
+                    help="OpenAI-compatible model URL (default LLM_URL or the 27B on :8092; "
+                         "the 4B fallback is http://127.0.0.1:8093/v1)")
     ap.add_argument("--preview", action="store_true", help="show the stream with names in a window, 2x")
     ap.add_argument("--metrics", action="store_true",
                     help="append timings/counts (no text) to data/greeter_metrics.jsonl")
     args = ap.parse_args()
 
-    url = os.environ.get("LLM_URL", "http://127.0.0.1:8093/v1").rstrip("/")
+    url = args.llm_url.rstrip("/")
+    try:
+        urllib.request.urlopen(f"{url}/models", timeout=5).read()
+    except Exception as e:
+        sys.exit(f"greeter: no model at {url} ({e}). Start the 27B (~/bin/manifiestate, :8092) or use the "
+                 f"4B: --llm-url http://127.0.0.1:8093/v1")
     cam = f"http://{cam_ip()}:81/stream"
     now = datetime.now()
     stop_at = datetime.strptime(args.until, "%H:%M").replace(year=now.year, month=now.month, day=now.day)
