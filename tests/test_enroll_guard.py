@@ -138,6 +138,21 @@ try:
     check("no second unknown exchange after the enrollment", [e[0] for e in evs if e[0] == "unknown"], [])
     check("the new name is confirmed", "nuevo" in confirmed, True)
     check("not re-greeted right after enrolling", [e for e in evs if e[0] == "person"], [])
+    # Still in view for a while: last_seen keeps refreshing, so no greeting (the 16:04 rerun).
+    for k in range(20):
+        evs += greeter.frame_events(st, confirmer, st.gallery, [ident], 104.0 + k * 0.3, 5)[1]
+    check("no greeting while the person stays in view", [e for e in evs if e[0] == "person"], [])
+    # Leaves (frames with no face) for more than 5 s, then comes back.
+    t = 110.0
+    for k in range(25):
+        t += 0.3
+        evs += greeter.frame_events(st, confirmer, st.gallery, [], t, 5)[1]
+    for k in range(3):
+        t += 0.3
+        evs += greeter.frame_events(st, confirmer, st.gallery, [ident], t, 5)[1]
+    check("greeted by name after leaving > 5 s and coming back",
+          [e[:2] for e in evs if e[0] == "person"], [("person", "nuevo")])
+    check("still no unknown exchange", [e[0] for e in evs if e[0] == "unknown"], [])
 finally:
     with mem._conn() as c:
         c.execute("DELETE FROM cam.people WHERE name LIKE 'test_unit_guard%'")

@@ -310,6 +310,8 @@ def unknown_exchange(st, mem, args):
         print(f"asistente> Encantado, {name.capitalize()}. La próxima vez te reconoceré.\n"
               f"   [guardado: cam.people id={pid} con consent_at; {len(kept)} embeddings de {len(feats)} "
               f"caras vistas en {time.monotonic() - t0:.0f} s -> {st.gallery_dir / (name + '.npy')}]", flush=True)
+        if getattr(args, "absent_minutes", 30) * 60 <= 10:  # only when a short absence re-greets (live tests)
+            print("asistente> Sal del cuadro unos 10 segundos y vuelve para que te salude.", flush=True)
         metric(args.metrics, event="enrolled", name=name, embeddings=len(kept), faces_seen=len(feats))
         return True
     finally:
