@@ -1,0 +1,4 @@
+# Espressif CameraWebServer example (adapted): not this project's own code, keep it out of the language stats.
+CameraWebServer/** linguist-vendored
+# Gzipped web page as a byte array.
+CameraWebServer/camera_index.h linguist-generated
