@@ -454,3 +454,35 @@ The first live attempt (2026-10-01) stored nothing. Ctrl+C ended the
 conversation before fact extraction ran, and the consent answer was not taken
 as a yes (likely a stale empty line). Both are fixed but not yet retested; see
 NEXT.md.
+
+## Live test (c) passed, 2026-10-06
+
+Run 17:07-17:11 with `tools/live_test_unknown.sh` (throwaway gallery `data/gallery_live_test`,
+`--metrics --log-greeting --absent-minutes 0`), 4B on :8093. Evidence, `data/greeter_metrics.jsonl`:
+
+| step | event (2026-10-06) |
+|---|---|
+| unknown -> "sí" -> name -> enrolled | 17:07:13 `enrolled` prueba, 17 embeddings of 50 faces |
+| greeted by name | 17:07:43 `greeting` prueba, 0 facts |
+| something momentary, then "chao" -> nothing stored | 17:08:20 `facts` stored 0, dropped 0, end `goodbye` |
+| "me gusta el ciclismo de montaña", then "chao" -> stored | 17:10:22 `facts` stored 1, end `goodbye` ("Le gusta el ciclismo de montaña") |
+| greeted again using that fact | 17:10:45 `greeting` facts_in_prompt 1: "¿ya tienes ganas de dar una vuelta en bici de montaña?" (fact word: montaña) |
+| "olvídame" -> "sí" -> deleted | 17:10:56 `forget` prueba: 1 row, 1 fact, gallery file |
+| treated as a stranger afterwards, declined | 17:11:09 `unknown_declined` (answered, not a clear "sí") |
+
+Afterwards `cam.people`/`cam.facts` and `data/gallery/` match the 14:59 backup
+(`data/backup/cam-20261006.sql`, `data/gallery.bak-20261006/`) and `data/gallery_live_test/` is empty.
+One restart inside the run (17:09:20 `facts` end `shutdown`); every step from storing the fact to the
+forget happened in one greeter process (17:09:54-17:11:09).
+
+The earlier attempts that day caught five problems, each fixed with an offline test before rerunning:
+- `76b30d1` name collision: enrolling as an existing name ("juan") into the throwaway gallery re-stamped the
+  real row's consent_at (the DB is shared); a taken name is now refused and asked again.
+- `da9c475` enroll race: a frame identified with the pre-enrollment gallery re-started the unknown flow
+  ("no te conozco" right after "Encantado").
+- `d8ccb1a` forgotten person re-created: after "olvídame", stale frames greeted the person again and the
+  greeting created a new row (consent NULL); only enrollment creates people now.
+- `f74384e` greeting ignored remembered facts: the hint was optional ("si encaja"); now explicit
+  (4B: 23/25 -> 25/25 greetings use the fact).
+- `5ce1586` a conversation needed an empty Enter to end; it now ends with a goodbye or by walking away
+  (8 s), with the state shown on the preview window.

@@ -16,7 +16,7 @@ next.
 - [x] **Phase 1: face detection.** YuNet on the PC CPU, ~2 ms per frame.
 - [x] **Phase 2: recognition.** SFace embeddings, threshold chosen from an impostor test.
 - [x] **Phase 3: greeting.** Local Qwen3.5-4B greets confirmed people by name, in Spanish.
-- [x] **Phase 4: memory.** Facts extracted after each chat and used in later greetings; consent, "olvídame" (forget me). *Pending: live test of the unknown-person flow + forget.*
+- [x] **Phase 4: memory.** Facts extracted after each chat and used in later greetings; consent, "olvídame" (forget me). Live test of the unknown-person flow + forget passed on 2026-10-06 (evidence in NOTES.md).
 - [ ] **Next:** the 27B model as the conversation model (if it passes the same fact-extraction eval).
 - [ ] **Next:** voice (speech in and out instead of typing).
 

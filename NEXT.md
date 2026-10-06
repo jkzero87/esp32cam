@@ -1,4 +1,4 @@
-# Next (written 2026-10-02, 18:52, for 2026-10-03)
+# Next (updated 2026-10-06, 17:15)
 
 Everything must stop by 18:55 (PC off ~19:00): `tools/stop_at.sh HH:MM PID PATTERN`.
 
@@ -28,20 +28,18 @@ The 27B becomes the greeter default (`LLM_URL`) **only if** it passes RULE.md
 does not exist; the command above is the plan. Compare with the 4B: leaks,
 hallucinations, recall, reply latency.
 
-## 2. Live test (c): unknown flow + forget
-Not done today. Only the "no answer" path was verified (18:08, nothing
-stored). Run with an empty temporary gallery: "sí" → name "prueba" → talk →
-"olvídame" → "sí"; check with `pc/status.py --gallery-dir /tmp/empty_gallery`
-after each step (README, "Phase 4").
+## 2. Live test (c): unknown flow + forget — DONE 2026-10-06
+Passed 17:07-17:11 (`tools/live_test_unknown.sh`); evidence and the five bugs it caught in NOTES.md,
+"Live test (c) passed, 2026-10-06".
 
-## 3. One live conversation (memory)
-Check that stored facts come out in third person (fix made after today's
-live tests) and that the greeting uses a stored fact (verified with the 4B at
-18:07, 1 fact in the prompt).
+## 3. One live conversation (memory) — DONE 2026-10-06
+Covered by the same run: the fact was stored in third person ("Le gusta el ciclismo de montaña") and the
+next greeting used it (logged with `--log-greeting`).
 
 ## 4. Known 4B weaknesses to compare against the 27B
 - Slang: "chelas" (beers) not understood.
-- Invented details in replies (e.g. "veo y escucho").
+- Invented details in replies (e.g. "veo y escucho"; 2026-10-06 greetings: "en la sala", "el escritorio",
+  "ya es aquí": it cannot see, so any place/object it names is invented).
 - No inference of durable traits ("esperando el partido de la selección" →
   never "es hincha de la Selección").
 
