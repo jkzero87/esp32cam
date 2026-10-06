@@ -486,3 +486,25 @@ The earlier attempts that day caught five problems, each fixed with an offline t
   (4B: 23/25 -> 25/25 greetings use the fact).
 - `5ce1586` a conversation needed an empty Enter to end; it now ends with a goodbye or by walking away
   (8 s), with the state shown on the preview window.
+
+## Greeting invents the scene: scene check 8/30 -> 3/30, rule not met (2026-10-06)
+
+Live greetings said "Qué gusto tenerte aquí en la sala. ¿Te gusta cómo está todo el escritorio?" and
+"ya es aquí". The model never gets the image, so any place/object it names is invented. Cause found in the
+prompt itself: SYSTEM said "una cámara **sobre un escritorio**". New SYSTEM: no desk; "No puedes ver la
+imagen"; never mention places, rooms, furniture, objects, clothing, appearance, or what the person is doing
+or where they come from unless they said it or it is a remembered fact.
+
+`tools/check_greeting_scene.py`, 4B on :8093, temperature 0.7, 20 greetings without facts + 10 with one
+fact, counted by eye (invented = a place/furniture/object/clothing/appearance/presence of something else or
+the person's activity not in the fact; mentioning the arrival itself is not):
+
+| prompt | invented scene | fact used (of 10) |
+|---|---|---|
+| old (`cba9790`) | 8/30: escritorio, pantalla, rincón, "después del viaje", oficina, "¿te sentaste?", "alumnos al despacho", "Toby está aquí" | 10/10 |
+| new | 3/30: "Bienvenida a casa", "¿Ya te has acomodado aquí?", "¡espera a que Toby salude!" | 10/10 |
+
+Pre-registered pass rule: 0/30 invented and fact used in >= 9/10. **Not met** (3/30). Committed as an
+improvement, not a pass. The 60 greetings: `data/scene_check/old.jsonl`, `data/scene_check/new.jsonl`
+(gitignored). The automatic word flag disagreed with the eye count both times (6 and 1), so the eye count
+is the result.

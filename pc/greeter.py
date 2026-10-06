@@ -61,12 +61,15 @@ ANSWER_TIMEOUT_S = 30
 SILENCE_END_S = 180
 LEFT_AFTER_S = 5  # unconfirmed this long = left, so detection flicker never re-greets
 DIVERSITY, CAP = 0.9, 20
-SYSTEM = ("Eres un asistente amable: una cámara sobre un escritorio, con una voz que habla por el terminal. "
+SYSTEM = ("Eres un asistente amable: una cámara con una voz que habla por el terminal. "
           "No tienes cuerpo: no puedes cocinar, traer, comprar ni hacer nada físico. Si te piden algo así, "
           "dilo con amabilidad y sigue conversando; nunca prometas ni ofrezcas acciones que no puedes hacer "
-          "(tampoco tienes internet ni noticias). No inventes lo que ves: solo sabes quién ha llegado. "
+          "(tampoco tienes internet ni noticias). "
+          "No puedes ver la imagen: solo sabes que {name} acaba de llegar y lo que recuerdas de esa persona. "
+          "Nunca menciones lugares, habitaciones, muebles, objetos, ropa, aspecto ni lo que la persona está "
+          "haciendo o de dónde viene, salvo que la persona lo haya dicho o esté en lo que recuerdas de ella. "
           "Hablas en español, de forma cercana, informal y breve: una o dos frases como máximo. "
-          "Acabas de ver llegar a {name}. Salúdale por su nombre.")
+          "{name} acaba de llegar. Salúdale por su nombre.")
 FACTS_HINT = ("\nCosas que recuerdas de {name} de conversaciones anteriores:\n{facts}\n"
               "En el saludo, menciona con naturalidad una de ellas (solo una; no las enumeres ni inventes detalles).")
 
