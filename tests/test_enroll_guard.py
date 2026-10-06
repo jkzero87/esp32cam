@@ -153,6 +153,44 @@ try:
     check("greeted by name after leaving > 5 s and coming back",
           [e[:2] for e in evs if e[0] == "person"], [("person", "nuevo")])
     check("still no unknown exchange", [e[0] for e in evs if e[0] == "unknown"], [])
+
+    print("== 'olvídame' with the person still in view (2026-10-06: forgotten person greeted and re-created)")
+    gone = "test_unit_guard_gone"
+    gdir = tmp / "gallery_forget"
+    gdir.mkdir()
+    fmem = Memory(gdir)
+    face2 = feature(11)
+    np.save(gdir / f"{gone}.npy", np.vstack([face2]))
+    check("enroll the person to forget", fmem.enroll(gone) is not None, True)
+    st = greeter.State(gdir)
+    confirmer = greeter.Confirmer()
+    seen = [(gone, 0.99, face2)]
+    evs = []
+    for k in range(3):                           # in view and confirmed
+        evs += greeter.frame_events(st, confirmer, st.gallery, seen, 200.0 + k * 0.3, 5)[1]
+    check("greeted once when first confirmed", [e[:2] for e in evs if e[0] == "person"], [("person", gone)])
+    pre_forget_gallery = st.gallery
+    llm_calls = []
+    greeter.llm = lambda url, messages, **kw: (llm_calls.append(1) or ("Hola", 0.1, 2, 10.0))
+    script = iter(["olvídame", "sí"])
+    greeter.read_line = lambda prompt, timeout, fresh=False: next(script, None)
+    greeter.person_conversation(st, fmem, SimpleNamespace(metrics=False), "http://unused", gone, 0.0)
+    check("forget removed the row", fmem.existing_id(gone), None)
+    check("forget removed the gallery file", (gdir / f"{gone}.npy").exists(), False)
+    # A frame identified before the forget lands after it, then frames that still see the face.
+    evs = greeter.frame_events(st, confirmer, pre_forget_gallery, seen, 201.0, 5)[1]
+    for k in range(3):
+        ids = [greeter.identify(None, st.gallery, None, None, greeter.RECOGNIZE_AT, feat=face2)] \
+            if st.gallery else [("unknown", 0.0, face2)]
+        evs += greeter.frame_events(st, confirmer, st.gallery, ids, 201.1 + k * 0.3, 5)[1]
+    check("stale frames do not greet the forgotten person", [e for e in evs if e[0] == "person"], [])
+    # Even if a greeting for that name was already queued, it neither greets nor creates a row.
+    calls_before = len(llm_calls)
+    greeter.person_conversation(st, fmem, SimpleNamespace(metrics=False), "http://unused", gone, 0.0)
+    check("a queued greeting for a forgotten name does not call the model", len(llm_calls), calls_before)
+    check("no row re-created for the forgotten name", fmem.existing_id(gone), None)
+    check("add_facts for a name with no row stores nothing and creates nothing",
+          (fmem.add_facts(gone, ["Le gusta el té"], datetime.now(timezone.utc)), fmem.existing_id(gone)), (0, None))
 finally:
     with mem._conn() as c:
         c.execute("DELETE FROM cam.people WHERE name LIKE 'test_unit_guard%'")

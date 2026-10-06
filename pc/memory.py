@@ -272,10 +272,19 @@ class Memory:
                 "SELECT f.fact FROM cam.facts f JOIN cam.people p ON p.id = f.person_id "
                 "WHERE p.name = %s ORDER BY f.created_at DESC, f.id DESC LIMIT %s", (name, n))]
 
+    def existing_id(self, name):
+        """id of NAME's row, or None. Never creates one."""
+        with self._conn() as c:
+            row = c.execute("SELECT id FROM cam.people WHERE name = %s", (name,)).fetchone()
+        return row[0] if row else None
+
     def add_facts(self, name, facts, conversation_at):
+        """Store FACTS for an existing person; a name with no row (e.g. just forgotten) stores nothing."""
         if not facts:
             return 0
-        pid = self.person_id(name)
+        pid = self.existing_id(name)
+        if pid is None:
+            return 0
         with self._conn() as c:
             with c.cursor() as cur:
                 cur.executemany("INSERT INTO cam.facts (person_id, fact, source_conversation_at) VALUES (%s, %s, %s)",

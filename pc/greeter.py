@@ -204,7 +204,13 @@ class State:
 def person_conversation(st, mem, args, url, name, t_confirm):
     display = name.capitalize()
     started = datetime.now(timezone.utc)
-    mem.person_id(name)
+    # Only enrollment (after a clear "sí") creates people: a name with no row or no gallery entry
+    # (e.g. confirmed from frames seen just before "olvídame") is not greeted (2026-10-06 live test).
+    with st.lock:
+        in_gallery = name in st.gallery
+    if not in_gallery or mem.existing_id(name) is None:
+        print(f"\n({display}: sin perfil; no saludo)", flush=True)
+        return
     facts = mem.recent_facts(name)
     system = SYSTEM.format(name=display)
     if facts:
@@ -235,7 +241,7 @@ def person_conversation(st, mem, args, url, name, t_confirm):
             if answer is not None and is_clear_yes(answer):
                 removed = mem.forget(name)
                 with st.lock:
-                    st.gallery.pop(name, None)
+                    st.gallery = {k: v for k, v in st.gallery.items() if k != name}  # new dict: frame_events restarts
                     st.last_seen.pop(name, None)
                 print(f"asistente> Hecho, {display}. Ya no te recuerdo.\n"
                       f"   [borrado: {removed['people']} fila en cam.people, {removed['facts']} hechos, "
