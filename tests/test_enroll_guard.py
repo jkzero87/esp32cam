@@ -40,7 +40,7 @@ def run_exchange(st, mem, answers, metrics_file):
     """unknown_exchange with scripted answers; each answer also 'shows' one face to the collector."""
     script = iter(answers)
 
-    def fake_read_line(prompt, timeout, fresh=False):
+    def fake_read_line(prompt, timeout, fresh=False, stop=None):
         with st.lock:
             if st.collector is not None:
                 st.collector.append(feature(len(st.collector)))
@@ -174,7 +174,7 @@ try:
     llm_calls = []
     greeter.llm = lambda url, messages, **kw: (llm_calls.append(1) or ("Hola", 0.1, 2, 10.0))
     script = iter(["olvídame", "sí"])
-    greeter.read_line = lambda prompt, timeout, fresh=False: next(script, None)
+    greeter.read_line = lambda prompt, timeout, fresh=False, stop=None: next(script, None)
     greeter.person_conversation(st, fmem, SimpleNamespace(metrics=False), "http://unused", gone, 0.0)
     check("forget removed the row", fmem.existing_id(gone), None)
     check("forget removed the gallery file", (gdir / f"{gone}.npy").exists(), False)
@@ -212,7 +212,7 @@ try:
     greeter.METRICS = metrics_file
     largs = SimpleNamespace(metrics=True, log_greeting=True)
     script = iter([typed, ""])
-    greeter.read_line = lambda prompt, timeout, fresh=False: next(script, None)
+    greeter.read_line = lambda prompt, timeout, fresh=False, stop=None: next(script, None)
     greeter.person_conversation(st, fmem, largs, "http://unused", who, 0.0)
     events = [json.loads(line) for line in metrics_file.read_text().splitlines()]
     saved = [e for e in events if e["event"] == "facts" and e["name"] == who]

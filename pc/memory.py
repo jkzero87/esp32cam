@@ -72,6 +72,28 @@ def wants_forget(text):
     return bool(FORGET_RE.search(text or ""))
 
 
+GOODBYES = [p.split() for p in (
+    "chao", "chau", "adios", "bye", "nos vemos", "nos vemos manana", "nos vemos luego", "hasta luego",
+    "hasta pronto", "hasta manana", "hasta la proxima", "me voy", "ya me voy", "me tengo que ir")]
+GOODBYE_FILLER = {"bueno", "pues", "vale", "ok", "ya", "gracias", "muchas", "y", "entonces", "nada", "listo",
+                  "amigo", "amiga", "chaito", "besos", "un", "abrazo", "eh"}
+
+
+def wants_goodbye(text, name=""):
+    """True if TEXT is a farewell: the whole message, or its closing words ("bueno, me voy",
+    "gracias, hasta luego Prueba"). Accent/case-insensitive. A goodbye word inside a longer
+    sentence ("me voy a montar bici el sábado") is not a farewell."""
+    words = [w for w in norm(text).split() if w not in GOODBYE_FILLER and w != norm(name)]
+    if not words:
+        return False
+    if any(words[-len(p):] == p for p in GOODBYES if len(words) >= len(p)):
+        return True                                  # the message ends with a farewell
+    for p in GOODBYES:                               # or starts with one and nothing else follows
+        if words[:len(p)] == p and len(words) == len(p):
+            return True
+    return False
+
+
 def name_slug(raw):
     """A spoken name -> gallery/DB name: lower-case ASCII letters, digits, _ and -."""
     s = norm(raw)

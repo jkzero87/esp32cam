@@ -39,10 +39,17 @@ flowchart LR
 2. On the PC, YuNet finds faces and SFace turns each into a 128-d embedding,
    compared with each enrolled person's gallery. A person is *confirmed* when
    2 of the last 3 frames match at cosine ≥ 0.45.
-3. The greeter asks the local LLM for a short greeting by name, including up
-   to 5 remembered facts, and the person replies in the terminal.
-4. After the conversation the LLM extracts up to 3 short, durable facts from
-   what the person said. Only those facts are stored, never the transcript.
+3. The greeter asks the local LLM for a short greeting by name that mentions one
+   of up to 5 remembered facts, and the person replies in the terminal. The camera
+   keeps running during the conversation (the terminal is read without blocking it).
+4. A conversation ends the way it does between people: a goodbye ("chao", "adiós",
+   "nos vemos", "me voy" as the whole message or its closing words; not inside a
+   longer sentence), or the person leaving the camera for 8 s (`--leave-seconds`).
+   Three minutes of silence or an empty line are fallbacks. The preview window shows
+   the state in large text: "Conversando con <nombre>", "Guardando...", "Listo:
+   recordé N cosa(s)" / "Listo: nada nuevo", "Olvidado". Then the LLM extracts up
+   to 3 short, durable facts from what the person said. Only those facts are
+   stored, never the transcript.
 
 ## Measured results
 
@@ -157,7 +164,7 @@ llama-server -m Qwen3.5-4B-MTP-UD-Q4_K_XL.gguf -ngl 0 --device none -c 4096 -t 4
 .venv/bin/python pc/status.py      # what it remembers (read-only)
 ```
 
-Tests: `.venv/bin/python tests/test_memory.py`, `tests/test_ctrlc.py`, `tests/test_enroll_guard.py` (offline
+Tests: `.venv/bin/python tests/test_memory.py`, `tests/test_ctrlc.py`, `tests/test_enroll_guard.py`, `tests/test_conversation_end.py` (offline
 by design; they refuse to run if `LLM_URL` points at a model), and
 `tests/fact_eval/run_eval.py` against a running model.
 

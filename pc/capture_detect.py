@@ -40,6 +40,7 @@ import re
 import statistics
 import sys
 import time
+import unicodedata
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -199,12 +200,18 @@ def maybe_add(gallery, name, feat, sim):
     return len(gallery[name])
 
 
-def show(img, faces, label, color, labels=None):
-    """Scale 2x, draw boxes at the new scale and the status line; return True on q."""
+def show(img, faces, label, color, labels=None, status=""):
+    """Scale 2x, draw boxes at the new scale and the status line; return True on q.
+    STATUS (greeter: "Conversando con ...", "Guardando...") is drawn large under it, readable
+    from a few steps away; accents are dropped because OpenCV's fonts are ASCII only."""
     big = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_LINEAR)
     draw_faces(big, [list(f[:4] * 2) + list(f[4:]) for f in faces], labels)
     cv2.rectangle(big, (0, 0), (big.shape[1], 22), (0, 0, 0), -1)
     cv2.putText(big, label, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+    if status:
+        ascii_status = unicodedata.normalize("NFD", status).encode("ascii", "ignore").decode()
+        cv2.rectangle(big, (0, 22), (big.shape[1], 66), (0, 0, 0), -1)
+        cv2.putText(big, ascii_status, (8, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.95, (255, 255, 255), 2)
     cv2.imshow(WINDOW, big)
     return (cv2.waitKey(1) & 0xFF) == ord("q")
 

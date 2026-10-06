@@ -49,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from capture_detect import (GALLERY, GREEN, MODEL, RECOGNIZE_AT, ROOT, SFACE, WINDOW, YELLOW,  # noqa: E402
                             Confirmer, cam_ip, identify, show, stream_frames)
 from memory import (Memory, extraction_messages, fact_words_used, ground_facts, is_clear_yes, name_slug,  # noqa: E402
-                    parse_facts, third_person, wants_forget)
+                    parse_facts, third_person, wants_forget, wants_goodbye)
 
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
@@ -104,19 +104,21 @@ class CtrlC:
         self.exit_fn(130)
 
 
-def read_line(prompt, timeout, fresh=False):
-    """input() with a timeout; None on timeout, end of input or shutdown.
+def read_line(prompt, timeout, fresh=False, stop=None):
+    """input() with a timeout; None on timeout, end of input, shutdown or when the
+    STOP event is set (the person left the camera). Polls stdin with select, so the
+    conversation thread can be ended from the camera loop without a blocking read.
     FRESH discards anything typed before the prompt (a stale Enter must not
     answer a yes/no question)."""
     if fresh and sys.stdin.isatty():
         termios.tcflush(sys.stdin, termios.TCIFLUSH)
     print(prompt, end="", flush=True)
     deadline = time.monotonic() + timeout
-    while not STOPPING.is_set():
+    while not STOPPING.is_set() and not (stop is not None and stop.is_set()):
         left = deadline - time.monotonic()
         if left <= 0:
             break
-        ready, _, _ = select.select([sys.stdin], [], [], min(left, 0.5))
+        ready, _, _ = select.select([sys.stdin], [], [], min(left, 0.2))
         if ready:
             line = sys.stdin.readline()
             return None if line == "" else line.rstrip("\n")
@@ -199,6 +201,17 @@ class State:
         self.collector = None          # list of raw features of the unknown face during an exchange
         self.unknown_busy = False
         self.unknown_cooldown_until = 0.0
+        self.talking = None                # name of the person in the current conversation
+        self.talk_seen = 0.0               # monotonic time that person was last in a frame
+        self.talk_end = threading.Event()  # set by the camera loop when that person has left
+        self.status = ""                   # shown on the preview window and printed
+
+
+def set_status(st, text):
+    """The conversation state for the person in front of the camera: preview window + terminal."""
+    with st.lock:
+        st.status = text
+    print(f"\n[{text}]", flush=True)
 
 
 def person_conversation(st, mem, args, url, name, t_confirm):
@@ -211,6 +224,21 @@ def person_conversation(st, mem, args, url, name, t_confirm):
     if not in_gallery or mem.existing_id(name) is None:
         print(f"\n({display}: sin perfil; no saludo)", flush=True)
         return
+    with st.lock:
+        st.talking, st.talk_seen = name, time.monotonic()
+        st.talk_end.clear()
+    try:
+        talk(st, mem, args, url, name, display, started, t_confirm)
+    finally:
+        with st.lock:
+            st.talking = None
+
+
+def talk(st, mem, args, url, name, display, started, t_confirm):
+    """The conversation itself. It ends like one between people: a farewell, the person
+    leaving the camera for --leave-seconds, or (fallbacks) 3 minutes of silence or an empty line.
+    Then the facts are extracted. The state is shown on the preview window and printed."""
+    set_status(st, f"Conversando con {display}")
     facts = mem.recent_facts(name)
     system = SYSTEM.format(name=display)
     if facts:
@@ -233,10 +261,16 @@ def person_conversation(st, mem, args, url, name, t_confirm):
 
     said, end = [], "empty_line"
     while True:
-        reply = read_line("tú> ", SILENCE_END_S)
+        reply = read_line("tú> ", SILENCE_END_S, stop=st.talk_end)
         if reply is None or not reply.strip():
-            end = "shutdown" if STOPPING.is_set() else "silence" if reply is None else "empty_line"
+            end = ("shutdown" if STOPPING.is_set() else "left" if st.talk_end.is_set()
+                   else "silence" if reply is None else "empty_line")
             print(f"(fin de la conversación: {end})", flush=True)
+            break
+        if wants_goodbye(reply, name):
+            said.append(reply)
+            print(f"asistente> ¡Hasta luego, {display}!", flush=True)
+            end = "goodbye"
             break
         if wants_forget(reply):
             answer = read_line("asistente> ¿Seguro que quieres que te olvide? Borraré tu perfil, lo que recuerdo "
@@ -250,6 +284,7 @@ def person_conversation(st, mem, args, url, name, t_confirm):
                       f"   [borrado: {removed['people']} fila en cam.people, {removed['facts']} hechos, "
                       f"galería {'borrada' if removed['gallery_file'] else 'no existía'}]", flush=True)
                 metric(args.metrics, event="forget", name=name, **removed)
+                set_status(st, "Olvidado")
                 return
             print("asistente> Vale, no borro nada.", flush=True)
             continue
@@ -263,13 +298,15 @@ def person_conversation(st, mem, args, url, name, t_confirm):
 
     if not said:
         metric(args.metrics, event="facts", name=name, stored=0, dropped=0, end=end, user_lines=0)
+        set_status(st, "Listo: nada nuevo")
         return
-    print("   [extrayendo hechos…]", flush=True)
+    set_status(st, "Guardando...")
     kept, dropped, _ = extract_facts(url, display, said)
     n = mem.add_facts(name, kept, started)
     print(f"   [memoria: {n} hecho(s) guardado(s)" + "".join(f"\n    + {f}" for f in kept)
           + "".join(f"\n    - descartado ({why}): {f}" for f, why in dropped) + "]", flush=True)
     metric(args.metrics, event="facts", name=name, stored=n, dropped=len(dropped), end=end, user_lines=len(said))
+    set_status(st, f"Listo: recordé {n} cosa(s)" if n else "Listo: nada nuevo")
 
 
 def unknown_exchange(st, mem, args):
@@ -328,7 +365,7 @@ def unknown_exchange(st, mem, args):
             st.collector = None
 
 
-def frame_events(st, confirmer, gallery, ids, mono, greet_after_s):
+def frame_events(st, confirmer, gallery, ids, mono, greet_after_s, leave_s=8.0):
     """Confirm one camera frame's faces; return (confirmed names, events to queue).
 
     GALLERY is the gallery IDS were computed with. Frames identified before an enrollment
@@ -344,6 +381,11 @@ def frame_events(st, confirmer, gallery, ids, mono, greet_after_s):
         {n for n, _, _ in ids if n != "unknown"}, any(n == "unknown" for n, _, _ in ids))
     out = []
     with st.lock:
+        if st.talking is not None:     # the person in the conversation: seen in this frame, or gone too long
+            if any(n == st.talking for n, _, _ in ids):
+                st.talk_seen = mono
+            elif mono - st.talk_seen >= leave_s:
+                st.talk_end.set()
         for name in confirmed:
             gap = mono - st.last_seen[name] if name in st.last_seen else None
             if gap is None or gap >= greet_after_s:
@@ -380,6 +422,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--absent-minutes", type=float, default=30,
                     help="greet a person again only after this long unseen (default 30)")
+    ap.add_argument("--leave-seconds", type=float, default=8,
+                    help="end a conversation when its person is out of view this long (default 8)")
     ap.add_argument("--log-greeting", action="store_true",
                     help="live tests: also log each greeting's text and the stored-fact words it uses (with --metrics)")
     ap.add_argument("--gallery-dir", type=Path, default=GALLERY, help="gallery directory (default data/gallery)")
@@ -401,7 +445,7 @@ def main():
     rec = cv2.FaceRecognizerSF.create(str(SFACE), "", cv2.dnn.DNN_BACKEND_DEFAULT, cv2.dnn.DNN_TARGET_CPU)
     print(f"greeter: {cam} -> {url}; gallery {args.gallery_dir} ({', '.join(st.gallery) or 'empty'}); "
           f"threshold {RECOGNIZE_AT}; greet after {args.absent_minutes:g} min absent; stops at {args.until} "
-          f"or Ctrl+C. Reply + Enter; empty line ends a conversation.", flush=True)
+          f"or Ctrl+C. Reply + Enter; a goodbye or walking away ({args.leave_seconds:g} s) ends a conversation.", flush=True)
 
     ctrl_c = CtrlC()
     signal.signal(signal.SIGINT, ctrl_c)
@@ -430,13 +474,15 @@ def main():
                         rec.feature(rec.alignCrop(img, faces[0])).ravel().astype(np.float32)
                     st.collector.append(feat)
             confirmed, new_events = frame_events(st, confirmer, gallery, ids, time.monotonic(),
-                                                 max(args.absent_minutes * 60, LEFT_AFTER_S))
+                                                 max(args.absent_minutes * 60, LEFT_AFTER_S), args.leave_seconds)
             for ev in new_events:
                 events.put(ev)
             if args.preview:
                 labels = [(f"{n}{'*' if n in confirmed else ''} {s:.2f}", n != "unknown") for n, s, _ in ids]
+                with st.lock:
+                    status = st.status
                 show(img, faces, "confirmed: " + (", ".join(sorted(confirmed)) or "-"),
-                     GREEN if confirmed else YELLOW, labels or None)
+                     GREEN if confirmed else YELLOW, labels or None, status=status)
     except KeyboardInterrupt:
         print("\nstopped (Ctrl+C)", flush=True)
     finally:
